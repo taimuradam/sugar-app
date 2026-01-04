@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.api.deps import db, current_user, require_admin
 from app.schemas.transaction import TxCreate, TxOut
 from app.models.transaction import Transaction
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/banks/{bank_id}/transactions", tags=["transactions"])
 
@@ -30,6 +31,22 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(cur
     s.add(t)
     s.commit()
     s.refresh(t)
+
+    log_event(
+        s,
+        username=u.get("sub"),
+        action="transaction.create",
+        entity_type="transaction",
+        entity_id=t.id,
+        details={
+            "bank_id": bank_id,
+            "date": str(t.date),
+            "category": t.category,
+            "amount": str(t.amount),
+            "note": t.note,
+        },
+    )
+
     return t
 
 @router.delete("/{tx_id}")
@@ -37,6 +54,23 @@ def delete_tx(bank_id: int, tx_id: int, s: Session = Depends(db), u=Depends(requ
     t = s.execute(select(Transaction).where(Transaction.id == tx_id, Transaction.bank_id == bank_id)).scalar_one_or_none()
     if not t:
         raise HTTPException(status_code=404, detail="tx_not_found")
+    
+    details = {
+        "bank_id": bank_id,
+        "date": str(t.date),
+        "category": t.category,
+        "amount": str(t.amount),
+        "note": t.note,
+    }
     s.delete(t)
     s.commit()
+
+    log_event(
+        s,
+        username=u.get("sub"),
+        action="transaction.delete",
+        entity_type="transaction",
+        entity_id=tx_id,
+        details=details,
+    )
     return {"ok": True}

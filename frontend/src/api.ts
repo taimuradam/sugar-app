@@ -38,6 +38,16 @@ export type LedgerRow = {
 
 export type UserOut = { id: number; username: string; role: string; created_at?: string };
 
+export type AuditOut = {
+  id: number;
+  created_at: string;
+  username: string;
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  details: Record<string, any> | null;
+};
+
 function getToken() {
   return localStorage.getItem("token") || "";
 }
@@ -174,4 +184,20 @@ export async function deleteUser(userId: number) {
 
 export async function updateUser(userId: number, body: { password?: string; role?: "admin" | "user" }) {
   return await request<UserOut>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export async function listAudit(params?: {
+  username?: string;
+  entity_type?: string;
+  action?: string;
+  limit?: number;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.username) qs.set("username", params.username);
+  if (params?.entity_type) qs.set("entity_type", params.entity_type);
+  if (params?.action) qs.set("action", params.action);
+  qs.set("limit", String(params?.limit ?? 200));
+
+  const path = qs.toString() ? `/audit?${qs.toString()}` : "/audit";
+  return await request<AuditOut[]>(path);
 }

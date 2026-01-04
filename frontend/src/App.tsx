@@ -1,9 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { LogOut, Building2, Receipt, LineChart, Percent, Download, Users, Trash2, Plus } from "lucide-react";
+import {
+  LogOut,
+  Building2,
+  Receipt,
+  LineChart,
+  Percent,
+  Download,
+  Users,
+  Trash2,
+  Plus,
+  ClipboardList,
+} from "lucide-react";
 import * as api from "./api";
 import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx } from "./ui";
 
-type Tab = "ledger" | "transactions" | "rates" | "report" | "users";
+type Tab = "ledger" | "transactions" | "rates" | "report" | "users" | "audit";
 
 function fmtMoney(n: number) {
   if (Number.isNaN(n)) return "-";
@@ -138,6 +149,14 @@ export default function App() {
             <NavButton active={tab === "rates"} onClick={() => setTab("rates")} icon={<Percent className="h-4 w-4" />} text="Rates" />
             <NavButton active={tab === "report"} onClick={() => setTab("report")} icon={<Download className="h-4 w-4" />} text="Export report" />
             {isAdmin ? <NavButton active={tab === "users"} onClick={() => setTab("users")} icon={<Users className="h-4 w-4" />} text="Users" /> : null}
+            {isAdmin ? (
+              <NavButton
+                active={tab === "audit"}
+                onClick={() => setTab("audit")}
+                icon={<ClipboardList className="h-4 w-4" />}
+                text="Audit log"
+              />
+            ) : null}
 
             <Card>
               <CardHeader title="Bank details" subtitle="Matches the old project concept (type + additional rate)." />
@@ -185,8 +204,10 @@ export default function App() {
               <Rates bankId={selectedBankId} role={role} onError={setError} />
             ) : tab === "report" ? (
               <Report bankId={selectedBankId} onError={setError} />
-            ) : (
+            ) : tab === "users" ? (
               <UsersTab role={role} onError={setError} />
+            ) : (
+              <AuditLogTab role={role} onError={setError} />
             )}
           </div>
         </div>
@@ -870,5 +891,129 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
+  const isAdmin = props.role === "admin";
+
+  const [rows, setRows] = useState<api.AuditOut[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const [username, setUsername] = useState("");
+  const [entityType, setEntityType] = useState("");
+  const [action, setAction] = useState("");
+  const [limit, setLimit] = useState(200);
+
+  async function load() {
+    if (!isAdmin) return;
+    setLoading(true);
+    try {
+      const out = await api.listAudit({
+        username: username.trim() || undefined,
+        entity_type: entityType.trim() || undefined,
+        action: action.trim() || undefined,
+        limit,
+      });
+      setRows(out);
+    } catch (e: any) {
+      props.onError(e?.message || "Failed to load audit log");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardHeader title="Audit log" subtitle="Admins only." />
+        <CardBody>
+          <div className="text-sm text-slate-600">You don’t have permission to view audit logs.</div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Audit log" subtitle="Tracks who did what and when (admin only)." />
+      <CardBody>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div>
+            <Label>Username</Label>
+            <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g., admin" />
+          </div>
+          <div>
+            <Label>Entity type</Label>
+            <Input value={entityType} onChange={(e) => setEntityType(e.target.value)} placeholder='e.g., "transaction"' />
+          </div>
+          <div>
+            <Label>Action</Label>
+            <Input value={action} onChange={(e) => setAction(e.target.value)} placeholder='e.g., "transaction.create"' />
+          </div>
+          <div>
+            <Label>Limit</Label>
+            <Input
+              type="number"
+              value={String(limit)}
+              onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value || 200))))}
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center gap-2">
+          <Button kind="secondary" onClick={load} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </Button>
+          <div className="text-xs text-slate-500">
+            Showing newest first. Use filters to narrow results.
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <Table>
+            <thead>
+              <tr>
+                <Th>Time</Th>
+                <Th>User</Th>
+                <Th>Action</Th>
+                <Th>Entity</Th>
+                <Th>ID</Th>
+                <Th>Details</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="align-top">
+                  <Td className="whitespace-nowrap">
+                    {new Date(r.created_at).toLocaleString()}
+                  </Td>
+                  <Td className="whitespace-nowrap">{r.username}</Td>
+                  <Td className="whitespace-nowrap">{r.action}</Td>
+                  <Td className="whitespace-nowrap">{r.entity_type}</Td>
+                  <Td className="whitespace-nowrap">{r.entity_id ?? "-"}</Td>
+                  <Td className="min-w-[380px]">
+                    <pre className="whitespace-pre-wrap rounded-xl bg-slate-50 p-2 text-xs text-slate-700">
+                      {r.details ? JSON.stringify(r.details, null, 2) : "{}"}
+                    </pre>
+                  </Td>
+                </tr>
+              ))}
+              {!rows.length ? (
+                <tr>
+                  <Td colSpan={6} className="text-center text-sm text-slate-500">
+                    No audit entries found.
+                  </Td>
+                </tr>
+              ) : null}
+            </tbody>
+          </Table>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

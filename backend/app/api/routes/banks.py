@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.api.deps import db, current_user, require_admin
 from app.schemas.bank import BankCreate, BankOut
 from app.models.bank import Bank
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/banks", tags=["banks"])
 
@@ -20,4 +21,17 @@ def create_bank(body: BankCreate, s: Session = Depends(db), u=Depends(require_ad
     s.add(b)
     s.commit()
     s.refresh(b)
+
+    log_event(
+        s,
+        username=u.get("sub"),
+        action="bank.create",
+        entity_type="bank",
+        entity_id=b.id,
+        details={
+            "name": b.name,
+            "bank_type": b.bank_type,
+            "additional_rate": str(b.additional_rate) if b.additional_rate is not None else None,
+        },
+    )
     return b
