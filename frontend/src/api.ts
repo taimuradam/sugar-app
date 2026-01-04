@@ -22,7 +22,7 @@ export type TxOut = {
   id: number;
   bank_id: number;
   date: string;
-  category: string;
+  category: "principal" | "markup";
   amount: number;
   note: string | null;
   created_at?: string;
@@ -36,46 +36,47 @@ export type LedgerRow = {
   rate_percent: number;
 };
 
+export type UserOut = { id: number; username: string; role: string; created_at?: string };
+
 function getToken() {
   return localStorage.getItem("token") || "";
 }
 
-export function setToken(token: string) {
-  localStorage.setItem("token", token);
+export function setToken(t: string) {
+  localStorage.setItem("token", t);
 }
 
-export function clearAuth() {
+export function clearToken() {
   localStorage.removeItem("token");
   localStorage.removeItem("role");
-}
-
-export function setRole(role: string) {
-  localStorage.setItem("role", role);
 }
 
 export function getRole() {
   return localStorage.getItem("role") || "";
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init.headers as Record<string, string> | undefined),
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
+export function setRole(r: string) {
+  localStorage.setItem("role", r);
+}
 
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+async function request<T>(path: string, init?: RequestInit) {
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
 
   if (!res.ok) {
-    let detail = "";
+    let detail = `http_${res.status}`;
     try {
       const data = await res.json();
-      detail = data?.detail ? String(data.detail) : JSON.stringify(data);
-    } catch {
-      detail = await res.text();
-    }
-    throw new Error(`${res.status} ${res.statusText} ${detail}`.trim());
+      if (data?.detail) detail = String(data.detail);
+    } catch {}
+    throw new Error(detail);
   }
 
   if (res.status === 204) return undefined as T;
@@ -108,35 +109,41 @@ export async function addRate(bankId: number, body: { effective_date: string; an
   return await request<RateOut>(`/banks/${bankId}/rates`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export async function deleteRate(bankId: number, rateId: number) {
+  return await request<{ ok: boolean }>(`/banks/${bankId}/rates/${rateId}`, { method: "DELETE" });
+}
+
 export async function listTxs(bankId: number, start?: string, end?: string) {
   const qs = new URLSearchParams();
   if (start) qs.set("start", start);
   if (end) qs.set("end", end);
-  const suffix = qs.toString() ? `?${qs}` : "";
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return await request<TxOut[]>(`/banks/${bankId}/transactions${suffix}`);
 }
 
-export async function addTx(bankId: number, body: { date: string; category: string; amount: number; note?: string | null }) {
+export async function addTx(
+  bankId: number,
+  body: { date: string; category: "principal" | "markup"; amount: number; note?: string | null }
+) {
   return await request<TxOut>(`/banks/${bankId}/transactions`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function getLedger(bankId: number, start: string, end: string) {
-  const qs = new URLSearchParams({ start, end });
-  return await request<LedgerRow[]>(`/banks/${bankId}/ledger?${qs}`);
+export async function deleteTx(bankId: number, txId: number) {
+  return await request<{ ok: boolean }>(`/banks/${bankId}/transactions/${txId}`, { method: "DELETE" });
+}
+
+export async function ledger(bankId: number, start: string, end: string) {
+  return await request<LedgerRow[]>(
+    `/banks/${bankId}/ledger?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  );
 }
 
 export async function downloadReport(bankId: number, start: string, end: string) {
   const token = getToken();
-  const qs = new URLSearchParams({ start, end });
-
-  const res = await fetch(`${API_URL}/banks/${bankId}/report?${qs}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  const res = await fetch(`${API_URL}/banks/${bankId}/report?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`${res.status} ${res.statusText} ${txt}`.trim());
-  }
+  if (!res.ok) throw new Error(`http_${res.status}`);
 
   const blob = await res.blob();
   const cd = res.headers.get("content-disposition") || "";
@@ -151,4 +158,20 @@ export async function downloadReport(bankId: number, start: string, end: string)
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export async function listUsers() {
+  return await request<UserOut[]>("/users");
+}
+
+export async function createUser(body: { username: string; password: string; role: "admin" | "user" }) {
+  return await request<UserOut>("/users", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function deleteUser(userId: number) {
+  return await request<{ ok: boolean }>(`/users/${userId}`, { method: "DELETE" });
+}
+
+export async function updateUser(userId: number, body: { password?: string; role?: "admin" | "user" }) {
+  return await request<UserOut>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) });
 }

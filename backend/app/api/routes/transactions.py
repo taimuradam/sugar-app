@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.api.deps import db, current_user
+from app.api.deps import db, current_user, require_admin
 from app.schemas.transaction import TxCreate, TxOut
 from app.models.transaction import Transaction
 
@@ -31,3 +31,12 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(cur
     s.commit()
     s.refresh(t)
     return t
+
+@router.delete("/{tx_id}")
+def delete_tx(bank_id: int, tx_id: int, s: Session = Depends(db), u=Depends(require_admin)):
+    t = s.execute(select(Transaction).where(Transaction.id == tx_id, Transaction.bank_id == bank_id)).scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="tx_not_found")
+    s.delete(t)
+    s.commit()
+    return {"ok": True}

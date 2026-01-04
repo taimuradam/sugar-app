@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.api.deps import db, current_user, require_admin
@@ -18,3 +18,12 @@ def add_rate(bank_id: int, body: RateCreate, s: Session = Depends(db), u=Depends
     s.commit()
     s.refresh(r)
     return r
+
+@router.delete("/{rate_id}")
+def delete_rate(bank_id: int, rate_id: int, s: Session = Depends(db), u=Depends(require_admin)):
+    r = s.execute(select(Rate).where(Rate.id == rate_id, Rate.bank_id == bank_id)).scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="rate_not_found")
+    s.delete(r)
+    s.commit()
+    return {"ok": True}

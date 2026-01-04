@@ -6,7 +6,7 @@ from app.core.security import hash_password
 
 def main():
     username = os.environ.get("SEED_ADMIN_USER", "admin")
-    password = os.environ.get("SEED_ADMIN_PASS", "admin123")
+    password = os.environ.get("SEED_ADMIN_PASS", "admin")
 
     db = SessionLocal()
     try:
