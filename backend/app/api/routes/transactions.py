@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from datetime import date
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.api.deps import db, current_user, require_admin
 from app.schemas.transaction import TxCreate, TxOut
 from app.models.transaction import Transaction
+from app.models.bank_settings import BankSettings
 from app.services.audit import log_event
+from app.services.bank_settings import get_settings_for_year
 
 router = APIRouter(prefix="/banks/{bank_id}/transactions", tags=["transactions"])
 
@@ -27,6 +29,18 @@ def list_txs(
 
 @router.post("", response_model=TxOut)
 def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(current_user)):
+    if body.category == "principal" and body.amount > 0:
+        st = get_settings_for_year(s, bank_id, body.date.year)
+        if st and st.max_loan_amount is not None:
+            current_principal = s.execute(
+                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.bank_id == bank_id,
+                    Transaction.category == "principal",
+                )
+            ).scalar_one()
+            if float(current_principal) + float(body.amount) > float(st.max_loan_amount):
+                raise HTTPException(status_code=400, detail="max_loan_exceeded")
+
     t = Transaction(bank_id=bank_id, date=body.date, category=body.category, amount=body.amount, note=body.note)
     s.add(t)
     s.commit()

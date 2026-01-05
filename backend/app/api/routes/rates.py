@@ -10,11 +10,25 @@ router = APIRouter(prefix="/banks/{bank_id}/rates", tags=["rates"])
 
 @router.get("", response_model=list[RateOut])
 def list_rates(bank_id: int, s: Session = Depends(db), u=Depends(current_user)):
-    return s.execute(select(Rate).where(Rate.bank_id == bank_id).order_by(Rate.effective_date.asc())).scalars().all()
+    # Sort by order of addition (newest first) so the most recently-added rate
+    # is always at the top ("current" in the UI).
+    return s.execute(
+        select(Rate)
+        .where(Rate.bank_id == bank_id)
+        .order_by(Rate.created_at.desc(), Rate.id.desc())
+    ).scalars().all()
 
 @router.post("", response_model=RateOut)
 def add_rate(bank_id: int, body: RateCreate, s: Session = Depends(db), u=Depends(require_admin)):
-    r = Rate(bank_id=bank_id, effective_date=body.effective_date, annual_rate_percent=body.annual_rate_percent)
+    if body.tenor_months not in (1, 3, 6):
+        raise HTTPException(status_code=400, detail="kibor_tenor_invalid")
+
+    r = Rate(
+        bank_id=bank_id,
+        tenor_months=body.tenor_months,
+        effective_date=body.effective_date,
+        annual_rate_percent=body.annual_rate_percent,
+    )
     s.add(r)
     s.commit()
     s.refresh(r)
@@ -27,6 +41,7 @@ def add_rate(bank_id: int, body: RateCreate, s: Session = Depends(db), u=Depends
         entity_id=r.id,
         details={
             "bank_id": bank_id,
+            "tenor_months": r.tenor_months,
             "effective_date": str(r.effective_date),
             "annual_rate_percent": str(r.annual_rate_percent),
         },
@@ -38,9 +53,10 @@ def delete_rate(bank_id: int, rate_id: int, s: Session = Depends(db), u=Depends(
     r = s.execute(select(Rate).where(Rate.id == rate_id, Rate.bank_id == bank_id)).scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=404, detail="rate_not_found")
-    
+
     details = {
         "bank_id": bank_id,
+        "tenor_months": r.tenor_months,
         "effective_date": str(r.effective_date),
         "annual_rate_percent": str(r.annual_rate_percent),
     }

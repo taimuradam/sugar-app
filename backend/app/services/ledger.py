@@ -5,24 +5,37 @@ from sqlalchemy import select
 from app.models.transaction import Transaction
 from app.models.rate import Rate
 from app.models.bank import Bank
+from app.services.bank_settings import get_settings_for_year
 
 Q2 = Decimal("0.01")
-
 
 def d2(x: Decimal) -> Decimal:
     return x.quantize(Q2, rounding=ROUND_HALF_UP)
 
-
 def _to_dec(x) -> Decimal:
     return Decimal(str(x))
 
+def _borrow_date(txs: list[Transaction]) -> date | None:
+    ds = [t.date for t in txs if t.category == "principal" and _to_dec(t.amount) > Decimal("0")]
+    return min(ds) if ds else None
+
+def _rate_at(s: Session, bank_id: int, tenor: int, day: date) -> Decimal | None:
+    row = s.execute(
+        select(Rate).where(
+            Rate.bank_id == bank_id,
+            Rate.tenor_months == tenor,
+            Rate.effective_date <= day,
+        ).order_by(Rate.effective_date.desc(), Rate.id.desc())
+    ).scalars().first()
+    if not row:
+        return None
+    return _to_dec(row.annual_rate_percent)
 
 def compute_ledger(s: Session, bank_id: int, start: date, end: date):
     bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one_or_none()
-    addl = _to_dec(bank.additional_rate) if (bank and bank.additional_rate is not None) else Decimal("0")
+    if not bank:
+        return []
 
-    # IMPORTANT FIX:
-    # Load ALL transactions up to `end`, so we can compute correct opening balances at `start`.
     txs = s.execute(
         select(Transaction).where(
             Transaction.bank_id == bank_id,
@@ -30,36 +43,33 @@ def compute_ledger(s: Session, bank_id: int, start: date, end: date):
         ).order_by(Transaction.date.asc(), Transaction.id.asc())
     ).scalars().all()
 
-    rates = s.execute(
-        select(Rate).where(Rate.bank_id == bank_id).order_by(Rate.effective_date.asc(), Rate.id.asc())
-    ).scalars().all()
-
     tx_by_day: dict[date, list[Transaction]] = {}
     for t in txs:
         tx_by_day.setdefault(t.date, []).append(t)
 
-    # Start computing from earliest transaction date if it is before `start`
     calc_start = start
     if txs and txs[0].date < calc_start:
         calc_start = txs[0].date
 
-    # Better rate handling:
-    # - If there is no rate effective yet for a day, base_rate = 0.
-    rate_idx = -1
-    base_rate = Decimal("0")
-    current_rate = base_rate + addl
+    bd = _borrow_date(txs)
 
     principal = Decimal("0")
     accrued = Decimal("0")
 
     rows: list[dict] = []
     day = calc_start
-    while day <= end:
-        while rate_idx + 1 < len(rates) and rates[rate_idx + 1].effective_date <= day:
-            rate_idx += 1
-            base_rate = _to_dec(rates[rate_idx].annual_rate_percent)
-            current_rate = base_rate + addl
 
+    locked_rate: Decimal | None = None
+    if bank.bank_type == "islamic" and bd is not None:
+        st0 = get_settings_for_year(s, bank_id, bd.year)
+        if st0:
+            base = _rate_at(s, bank_id, st0.kibor_tenor_months, bd)
+            if base is None:
+                base = _to_dec(st0.kibor_placeholder_rate_percent)
+            addl = _to_dec(st0.additional_rate) if st0.additional_rate is not None else Decimal("0")
+            locked_rate = base + addl
+
+    while day <= end:
         for t in tx_by_day.get(day, []):
             amt = _to_dec(t.amount)
             if t.category == "principal":
@@ -70,11 +80,22 @@ def compute_ledger(s: Session, bank_id: int, start: date, end: date):
         if accrued < Decimal("0"):
             accrued = Decimal("0")
 
+        current_rate = Decimal("0")
+        if bank.bank_type == "islamic":
+            current_rate = locked_rate if locked_rate is not None else Decimal("0")
+        else:
+            st = get_settings_for_year(s, bank_id, day.year)
+            if st:
+                base = _rate_at(s, bank_id, st.kibor_tenor_months, day)
+                if base is None:
+                    base = _to_dec(st.kibor_placeholder_rate_percent)
+                addl = _to_dec(st.additional_rate) if st.additional_rate is not None else Decimal("0")
+                current_rate = base + addl
+
         daily_rate = (current_rate / Decimal("100")) / Decimal("365")
         daily_markup = d2(principal * daily_rate)
         accrued = d2(accrued + daily_markup)
 
-        # Only RETURN rows in the requested range
         if day >= start:
             rows.append({
                 "date": day,

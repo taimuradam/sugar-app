@@ -6,13 +6,22 @@ export type BankOut = {
   id: number;
   name: string;
   bank_type: string;
-  additional_rate: number | null;
   created_at?: string;
+
+  settings_year: number;
+  kibor_tenor_months: 1 | 3 | 6;
+  additional_rate: number | null;
+  kibor_placeholder_rate_percent: number;
+  max_loan_amount: number | null;
+  current_kibor_rate_percent?: number | null;
+  current_kibor_effective_date?: string | null;
+  current_total_rate_percent?: number | null;
 };
 
 export type RateOut = {
   id: number;
   bank_id: number;
+  tenor_months: 1 | 3 | 6;
   effective_date: string;
   annual_rate_percent: number;
   created_at?: string;
@@ -107,7 +116,15 @@ export async function listBanks() {
   return await request<BankOut[]>("/banks");
 }
 
-export async function createBank(body: { name: string; bank_type: string; additional_rate?: number | null }) {
+export async function createBank(body: {
+  name: string;
+  bank_type: string;
+  kibor_tenor_months: 1 | 3 | 6;
+  additional_rate?: number | null;
+  kibor_placeholder_rate_percent?: number;
+  max_loan_amount?: number | null;
+  year?: number | null;
+}) {
   return await request<BankOut>("/banks", { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -115,7 +132,10 @@ export async function listRates(bankId: number) {
   return await request<RateOut[]>(`/banks/${bankId}/rates`);
 }
 
-export async function addRate(bankId: number, body: { effective_date: string; annual_rate_percent: number }) {
+export async function addRate(
+  bankId: number,
+  body: { effective_date: string; tenor_months: 1 | 3 | 6; annual_rate_percent: number }
+) {
   return await request<RateOut>(`/banks/${bankId}/rates`, { method: "POST", body: JSON.stringify(body) });
 }
 

@@ -159,7 +159,7 @@ export default function App() {
             ) : null}
 
             <Card>
-              <CardHeader title="Bank details" subtitle="Matches the old project concept (type + additional rate)." />
+              <CardHeader title="Bank details" subtitle="Type + KIBOR tenor + yearly settings." />
               <CardBody>
                 {!selectedBank ? (
                   <div className="text-sm text-slate-600">No bank selected.</div>
@@ -169,9 +169,41 @@ export default function App() {
                       <div className="text-slate-600">Type</div>
                       <div className="font-mono">{selectedBank.bank_type}</div>
                     </div>
+
+                    <div className="flex justify-between">
+                      <div className="text-slate-600">Settings year</div>
+                      <div className="font-mono">{selectedBank.settings_year}</div>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <div className="text-slate-600">KIBOR tenor</div>
+                      <div className="font-mono">{selectedBank.kibor_tenor_months}m</div>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <div className="text-slate-600">KIBOR rate %</div>
+                      <div className="font-mono">
+                        {selectedBank.current_kibor_rate_percent ?? selectedBank.kibor_placeholder_rate_percent}
+                      </div>
+                    </div>
+
                     <div className="flex justify-between">
                       <div className="text-slate-600">Additional rate</div>
                       <div className="font-mono">{selectedBank.additional_rate ?? 0}</div>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <div className="text-slate-600">Total rate %</div>
+                      <div className="font-mono">
+                        {selectedBank.current_total_rate_percent ??
+                          ((selectedBank.current_kibor_rate_percent ?? selectedBank.kibor_placeholder_rate_percent) +
+                            (selectedBank.additional_rate ?? 0))}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <div className="text-slate-600">Max loan</div>
+                      <div className="font-mono">{selectedBank.max_loan_amount ?? "-"}</div>
                     </div>
                   </div>
                 )}
@@ -201,7 +233,7 @@ export default function App() {
             ) : tab === "transactions" ? (
               <Transactions bankId={selectedBankId} role={role} onError={setError} />
             ) : tab === "rates" ? (
-              <Rates bankId={selectedBankId} role={role} onError={setError} />
+              <Rates bankId={selectedBankId} role={role} onError={setError} onRatesChanged={() => refreshBanks(false)} />
             ) : tab === "report" ? (
               <Report bankId={selectedBankId} onError={setError} />
             ) : tab === "users" ? (
@@ -277,6 +309,11 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
   const [name, setName] = useState("");
   const [bankType, setBankType] = useState("conventional");
   const [additionalRate, setAdditionalRate] = useState<string>("0");
+
+  const [kiborTenor, setKiborTenor] = useState<"1" | "3" | "6">("1");
+  const [kiborPlaceholder, setKiborPlaceholder] = useState<string>("0");
+  const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
+
   const [loading, setLoading] = useState(false);
   const toast = useToast();
 
@@ -289,6 +326,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
             <Label>Name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Bank Alfalah" />
           </div>
+
           <div>
             <Label>Type</Label>
             <Select value={bankType} onChange={(e) => setBankType(e.target.value)}>
@@ -296,9 +334,34 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
               <option value="islamic">islamic</option>
             </Select>
           </div>
+
+          <div>
+            <Label>KIBOR base tenor</Label>
+            <Select value={kiborTenor} onChange={(e) => setKiborTenor(e.target.value as any)}>
+              <option value="1">1 month</option>
+              <option value="3">3 months</option>
+              <option value="6">6 months</option>
+            </Select>
+          </div>
+
+          <div>
+            <Label>KIBOR placeholder rate %</Label>
+            <Input value={kiborPlaceholder} onChange={(e) => setKiborPlaceholder(e.target.value)} inputMode="decimal" placeholder="0" />
+          </div>
+
           <div>
             <Label>Additional rate (optional)</Label>
             <Input value={additionalRate} onChange={(e) => setAdditionalRate(e.target.value)} inputMode="decimal" placeholder="0" />
+          </div>
+
+          <div>
+            <Label>Maximum loan amount (optional)</Label>
+            <Input
+              value={maxLoanAmount}
+              onChange={(e) => setMaxLoanAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="e.g., 50000000"
+            />
           </div>
 
           <Button
@@ -317,10 +380,33 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
 
               setLoading(true);
               try {
-                await api.createBank({ name: nm, bank_type: bankType, additional_rate: add });
+                const kib = kiborPlaceholder.trim() ? Number(kiborPlaceholder) : 0;
+                if (!Number.isFinite(kib)) {
+                  props.onError("kibor_placeholder_invalid");
+                  return;
+                }
+
+                const mx = maxLoanAmount.trim() ? Number(maxLoanAmount) : null;
+                if (maxLoanAmount.trim() && !Number.isFinite(mx as any)) {
+                  props.onError("max_loan_invalid");
+                  return;
+                }
+
+                await api.createBank({
+                  name: nm,
+                  bank_type: bankType,
+                  kibor_tenor_months: Number(kiborTenor) as 1 | 3 | 6,
+                  additional_rate: add,
+                  kibor_placeholder_rate_percent: kib,
+                  max_loan_amount: mx,
+                });
+
                 toast.success("Bank created.");
                 setName("");
                 setAdditionalRate("0");
+                setKiborTenor("1");
+                setKiborPlaceholder("0");
+                setMaxLoanAmount("");
                 props.onCreated();
               } catch (e: any) {
                 props.onError(e?.message || "failed_to_create_bank");
@@ -604,7 +690,7 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
   );
 }
 
-function Rates(props: { bankId: number; role: string; onError: (e: string) => void }) {
+function Rates(props: { bankId: number; role: string; onError: (e: string) => void; onRatesChanged?: () => void }) {
   const toast = useToast();
   const confirm = useConfirm();
   const today = new Date();
@@ -618,6 +704,7 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
 
   const [effectiveDate, setEffectiveDate] = useState(defaultDate);
   const [annualRate, setAnnualRate] = useState<string>("");
+  const [tenor, setTenor] = useState<"1" | "3" | "6">("1");
 
   const isAdmin = props.role === "admin";
 
@@ -627,6 +714,7 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
     try {
       const out = await api.listRates(props.bankId);
       setRows(out);
+      props.onRatesChanged?.();
     } catch (e: any) {
       props.onError(e?.message || "failed_to_load_rates");
     } finally {
@@ -642,10 +730,18 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
     <div className="space-y-5">
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Add rate</div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div>
             <Label>Effective date</Label>
             <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+          </div>
+          <div>
+            <Label>Tenor</Label>
+            <Select value={tenor} onChange={(e) => setTenor(e.target.value as any)}>
+              <option value="1">1 month</option>
+              <option value="3">3 months</option>
+              <option value="6">6 months</option>
+            </Select>
           </div>
           <div>
             <Label>Annual rate %</Label>
@@ -658,7 +754,11 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
                 try {
                   const parsed = Number(annualRate);
                   if (!Number.isFinite(parsed)) throw new Error("rate_invalid");
-                  await api.addRate(props.bankId, { effective_date: effectiveDate, annual_rate_percent: parsed });
+                  await api.addRate(props.bankId, {
+                    effective_date: effectiveDate,
+                    tenor_months: Number(tenor) as any,
+                    annual_rate_percent: parsed,
+                  });
                   toast.success("Rate row added.");
                   setAnnualRate("");
                   await refresh();
@@ -680,6 +780,8 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
         <Table>
           <thead>
             <tr>
+              <Th>Status</Th>
+              <Th>Tenor</Th>
               <Th>Effective date</Th>
               <Th>Annual rate %</Th>
               {isAdmin ? <Th /> : null}
@@ -688,13 +790,23 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <Td colSpan={isAdmin ? 3 : 2} className="text-slate-600">
+                <Td colSpan={isAdmin ? 5 : 4} className="text-slate-600">
                   No rates yet.
                 </Td>
               </tr>
             ) : (
-              rows.map((r) => (
+              rows.map((r, idx) => (
                 <tr key={r.id}>
+                  <Td>
+                    {idx === 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                        Current
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </Td>
+                  <Td className="font-mono">{r.tenor_months}m</Td>
                   <Td>{r.effective_date}</Td>
                   <Td className="font-mono">{fmtMoney(r.annual_rate_percent)}</Td>
                   {isAdmin ? (
@@ -734,9 +846,7 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
         </Table>
       </div>
 
-      <div className="text-sm text-slate-600">
-        Ledger math uses these rates + bank additional rate to calculate daily markup.
-      </div>
+      <div className="text-sm text-slate-600">Ledger math uses these rates + bank additional rate to calculate daily markup.</div>
     </div>
   );
 }
@@ -951,6 +1061,24 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
   const [entityType, setEntityType] = useState("");
   const [action, setAction] = useState("");
   const [limit, setLimit] = useState(200);
+  const [limitInput, setLimitInput] = useState("200");
+
+  function commitLimit(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setLimit(200);
+      setLimitInput("200");
+      return;
+    }
+    const n = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(n)) {
+      setLimitInput(String(limit));
+      return;
+    }
+    const clamped = Math.max(1, Math.min(1000, n));
+    setLimit(clamped);
+    setLimitInput(String(clamped));
+  }
 
   async function load() {
     if (!isAdmin) return;
@@ -973,6 +1101,14 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [limit]);
+
+  useEffect(() => {
+    setLimitInput(String(limit));
+  }, [limit]);
 
   if (!isAdmin) {
     return (
@@ -1006,8 +1142,14 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
             <Label>Limit</Label>
             <Input
               type="number"
-              value={String(limit)}
-              onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value || 200))))}
+              value={limitInput}
+              onChange={(e) => setLimitInput(e.target.value)}
+              onBlur={(e) => commitLimit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  commitLimit((e.target as HTMLInputElement).value);
+                }
+              }}
             />
           </div>
         </div>
@@ -1016,9 +1158,7 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
           <Button kind="secondary" onClick={load} disabled={loading}>
             {loading ? "Loading..." : "Refresh"}
           </Button>
-          <div className="text-xs text-slate-500">
-            Showing newest first. Use filters to narrow results.
-          </div>
+          <div className="text-xs text-slate-500">Showing newest first. Use filters to narrow results.</div>
         </div>
 
         <div className="mt-4 overflow-x-auto">
@@ -1036,9 +1176,7 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className="align-top">
-                  <Td className="whitespace-nowrap">
-                    {new Date(r.created_at).toLocaleString()}
-                  </Td>
+                  <Td className="whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</Td>
                   <Td className="whitespace-nowrap">{r.username}</Td>
                   <Td className="whitespace-nowrap">{r.action}</Td>
                   <Td className="whitespace-nowrap">{r.entity_type}</Td>
@@ -1052,8 +1190,8 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
               ))}
               {!rows.length ? (
                 <tr>
-                  <Td colSpan={6} className="text-center text-sm text-slate-500">
-                    No audit entries found.
+                  <Td colSpan={6} className="text-slate-600">
+                    No audit rows.
                   </Td>
                 </tr>
               ) : null}
