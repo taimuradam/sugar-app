@@ -275,7 +275,12 @@ export default function App() {
             ) : tab === "ledger" ? (
               <Ledger bankId={selectedBankId} onError={setError} />
             ) : tab === "transactions" ? (
-              <Transactions bankId={selectedBankId} role={role} onError={setError} />
+              <Transactions
+                bankId={selectedBankId}
+                role={role}
+                onError={setError}
+                onTransactionsChanged={() => refreshBanks(false)}
+              />
             ) : tab === "report" ? (
               <Report bankId={selectedBankId} onError={setError} />
             ) : tab === "users" ? (
@@ -551,7 +556,12 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
   );
 }
 
-function Transactions(props: { bankId: number; role: string; onError: (e: string) => void }) {
+function Transactions(props: {
+  bankId: number;
+  role: string;
+  onError: (e: string) => void;
+  onTransactionsChanged?: () => void;
+}) {
   const toast = useToast();
   const confirm = useConfirm();
   const today = new Date();
@@ -651,6 +661,7 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
                 setAmount("");
                 setNote("");
                 await refresh();
+                props.onTransactionsChanged?.();
               } catch (e: any) {
                 props.onError(e?.message || "failed_to_add_tx");
               }
@@ -717,6 +728,7 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
                               await api.deleteTx(props.bankId, t.id);
                               toast.success("Transaction deleted.");
                               await refresh();
+                              props.onTransactionsChanged?.();
                             } catch (e: any) {
                               props.onError(e?.message || "failed_to_delete_tx");
                               toast.error(e?.message || "Failed to delete transaction.");
