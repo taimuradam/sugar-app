@@ -12,7 +12,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import * as api from "./api";
-import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx } from "./ui";
+import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast } from "./ui";
 
 type Tab = "ledger" | "transactions" | "rates" | "report" | "users" | "audit";
 
@@ -278,6 +278,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
   const [bankType, setBankType] = useState("conventional");
   const [additionalRate, setAdditionalRate] = useState<string>("0");
   const [loading, setLoading] = useState(false);
+  const toast = useToast();
 
   return (
     <Card>
@@ -317,6 +318,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
               setLoading(true);
               try {
                 await api.createBank({ name: nm, bank_type: bankType, additional_rate: add });
+                toast.success("Bank created.");
                 setName("");
                 setAdditionalRate("0");
                 props.onCreated();
@@ -338,6 +340,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
 }
 
 function Ledger(props: { bankId: number; onError: (e: string) => void }) {
+  const toast = useToast();
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -421,6 +424,8 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
 }
 
 function Transactions(props: { bankId: number; role: string; onError: (e: string) => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -513,6 +518,7 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
                 if (!Number.isFinite(parsed) || Math.abs(parsed) < 1e-12) throw new Error("amount_invalid");
                 const signed = direction === "credit" ? -Math.abs(parsed) : Math.abs(parsed);
                 await api.addTx(props.bankId, { date, category, amount: signed, note: note.trim() ? note.trim() : null });
+                toast.success("Transaction added.");
                 setAmount("");
                 setNote("");
                 await refresh();
@@ -559,21 +565,32 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
                     <Td className="max-w-[420px] truncate whitespace-nowrap">{t.note || ""}</Td>
                     {isAdmin ? (
                       <Td className="text-right">
-                        <button
-                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        <Button
+                          kind="danger"
+                          size="sm"
                           onClick={async () => {
                             props.onError("");
+                            const ok = await confirm({
+                              title: "Delete transaction?",
+                              body: "This will permanently remove the transaction from the ledger.",
+                              confirmText: "Delete",
+                              danger: true,
+                            });
+                            if (!ok) return;
+
                             try {
                               await api.deleteTx(props.bankId, t.id);
+                              toast.success("Transaction deleted.");
                               await refresh();
                             } catch (e: any) {
                               props.onError(e?.message || "failed_to_delete_tx");
+                              toast.error(e?.message || "Failed to delete transaction.");
                             }
                           }}
                         >
                           <Trash2 className="h-4 w-4" />
                           Delete
-                        </button>
+                        </Button>
                       </Td>
                     ) : null}
                   </tr>
@@ -588,6 +605,8 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
 }
 
 function Rates(props: { bankId: number; role: string; onError: (e: string) => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -640,6 +659,7 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
                   const parsed = Number(annualRate);
                   if (!Number.isFinite(parsed)) throw new Error("rate_invalid");
                   await api.addRate(props.bankId, { effective_date: effectiveDate, annual_rate_percent: parsed });
+                  toast.success("Rate row added.");
                   setAnnualRate("");
                   await refresh();
                 } catch (e: any) {
@@ -679,21 +699,32 @@ function Rates(props: { bankId: number; role: string; onError: (e: string) => vo
                   <Td className="font-mono">{fmtMoney(r.annual_rate_percent)}</Td>
                   {isAdmin ? (
                     <Td className="text-right">
-                      <button
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      <Button
+                        kind="danger"
+                        size="sm"
                         onClick={async () => {
                           props.onError("");
+                          const ok = await confirm({
+                            title: "Delete rate row?",
+                            body: "This will permanently remove the rate row.",
+                            confirmText: "Delete",
+                            danger: true,
+                          });
+                          if (!ok) return;
+
                           try {
                             await api.deleteRate(props.bankId, r.id);
+                            toast.success("Rate row deleted.");
                             await refresh();
                           } catch (e: any) {
                             props.onError(e?.message || "failed_to_delete_rate");
+                            toast.error(e?.message || "Failed to delete rate row.");
                           }
                         }}
                       >
                         <Trash2 className="h-4 w-4" />
                         Delete
-                      </button>
+                      </Button>
                     </Td>
                   ) : null}
                 </tr>
@@ -721,6 +752,8 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
   const [loading, setLoading] = useState(false);
+
+  const toast = useToast();
 
   return (
     <div className="space-y-5">
@@ -764,6 +797,8 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
 }
 
 function UsersTab(props: { role: string; onError: (e: string) => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const isAdmin = props.role === "admin";
   const [rows, setRows] = useState<api.UserOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -824,6 +859,7 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
                 props.onError("");
                 try {
                   await api.createUser({ username, password, role });
+                  toast.success("User created.");
                   setUsername("");
                   setPassword("");
                   setRole("user");
@@ -867,21 +903,32 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
                     <Td className="font-mono">{u.username}</Td>
                     <Td className="font-mono">{u.role}</Td>
                     <Td className="text-right">
-                      <button
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      <Button
+                        kind="danger"
+                        size="sm"
                         onClick={async () => {
                           props.onError("");
+                          const ok = await confirm({
+                            title: `Delete user "${u.username}"?`,
+                            body: "This will permanently remove the user account.",
+                            confirmText: "Delete",
+                            danger: true,
+                          });
+                          if (!ok) return;
+
                           try {
                             await api.deleteUser(u.id);
+                            toast.success("User deleted.");
                             await refresh();
                           } catch (e: any) {
                             props.onError(e?.message || "failed_to_delete_user");
+                            toast.error(e?.message || "Failed to delete user.");
                           }
                         }}
                       >
                         <Trash2 className="h-4 w-4" />
                         Delete
-                      </button>
+                      </Button>
                     </Td>
                   </tr>
                 ))
