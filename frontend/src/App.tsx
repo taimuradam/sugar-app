@@ -50,6 +50,10 @@ export default function App() {
   useEffect(() => {
     if (!tokenReady) return;
     refreshBanks(true);
+    const t = window.setInterval(() => {
+      refreshBanks(false);
+    }, 60 * 60 * 1000);
+    return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenReady]);
 
@@ -353,7 +357,6 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
   const [additionalRate, setAdditionalRate] = useState<string>("0");
 
   const [kiborTenor, setKiborTenor] = useState<"1" | "3" | "6">("1");
-  const [kiborPlaceholder, setKiborPlaceholder] = useState<string>("0");
   const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
@@ -387,8 +390,9 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
           </div>
 
           <div>
-            <Label>KIBOR placeholder rate %</Label>
-            <Input value={kiborPlaceholder} onChange={(e) => setKiborPlaceholder(e.target.value)} inputMode="decimal" placeholder="0" />
+            <Label>KIBOR rate % (auto-filled)</Label>
+            <Input value="Auto" readOnly disabled />
+            <div className="mt-1 text-xs text-slate-500">Pulled from SBP KIBOR PDF at the bank creation date.</div>
           </div>
 
           <div>
@@ -422,12 +426,6 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
 
               setLoading(true);
               try {
-                const kib = kiborPlaceholder.trim() ? Number(kiborPlaceholder) : 0;
-                if (!Number.isFinite(kib)) {
-                  props.onError("kibor_placeholder_invalid");
-                  return;
-                }
-
                 const mx = maxLoanAmount.trim() ? Number(maxLoanAmount) : null;
                 if (maxLoanAmount.trim() && !Number.isFinite(mx as any)) {
                   props.onError("max_loan_invalid");
@@ -439,7 +437,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
                   bank_type: bankType,
                   kibor_tenor_months: Number(kiborTenor) as 1 | 3 | 6,
                   additional_rate: add,
-                  kibor_placeholder_rate_percent: kib,
+                  kibor_placeholder_rate_percent: 0,
                   max_loan_amount: mx,
                 });
 
@@ -447,7 +445,6 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
                 setName("");
                 setAdditionalRate("0");
                 setKiborTenor("1");
-                setKiborPlaceholder("0");
                 setMaxLoanAmount("");
                 props.onCreated();
               } catch (e: any) {

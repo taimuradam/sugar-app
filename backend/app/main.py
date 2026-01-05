@@ -1,13 +1,16 @@
 from fastapi import FastAPI
+import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.routes.auth import router as auth_router
 from app.api.routes.banks import router as banks_router
 from app.api.routes.transactions import router as tx_router
+from app.api.routes.rates import router as rates_router
 from app.api.routes.ledger import router as ledger_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.users import router as users_router
 from app.api.routes.audit import router as audit_router
+from app.services.kibor_sync import kibor_sync_loop
 
 app = FastAPI(title="Finance API")
 
@@ -22,7 +25,13 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(banks_router)
 app.include_router(tx_router)
+app.include_router(rates_router)
 app.include_router(ledger_router)
 app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(audit_router)
+
+
+@app.on_event("startup")
+async def _start_kibor_sync():
+    asyncio.create_task(kibor_sync_loop())
