@@ -149,7 +149,7 @@ export default function App() {
             ) : null}
 
             <Card>
-              <CardHeader title="Bank details" subtitle="Type + KIBOR tenor + yearly settings." />
+              <CardHeader title="Bank details" />
               <CardBody>
                 {!selectedBank ? (
                   <div className="text-sm text-slate-600">No bank selected.</div>
@@ -158,11 +158,6 @@ export default function App() {
                     <div className="flex justify-between">
                       <div className="text-slate-600">Type</div>
                       <div className="font-mono">{selectedBank.bank_type}</div>
-                    </div>
-
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">Settings year</div>
-                      <div className="font-mono">{selectedBank.settings_year}</div>
                     </div>
 
                     <div className="flex justify-between">
@@ -182,73 +177,73 @@ export default function App() {
                       <div className="font-mono">{selectedBank.additional_rate ?? 0}</div>
                     </div>
 
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">Total rate %</div>
-                      <div className="font-mono">
-                        {selectedBank.current_total_rate_percent ??
-                          ((selectedBank.current_kibor_rate_percent ?? selectedBank.kibor_placeholder_rate_percent) +
-                            (selectedBank.additional_rate ?? 0))}
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <div className="mb-2 flex items-center gap-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Loan</div>
+                        <div className="h-px flex-1 bg-slate-100" />
                       </div>
-                    </div>
 
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">Max loan</div>
-                      <div className="font-mono">
-                        {selectedBank.max_loan_amount == null ? "-" : fmtMoney(selectedBank.max_loan_amount)}
-                      </div>
-                    </div>
-
-                    {selectedBank.max_loan_amount != null ? (
-                      <>
+                      <div className="space-y-2">
                         <div className="flex justify-between">
-                          <div className="text-slate-600">Used</div>
-                          <div className="font-mono">{fmtMoney(Math.max(0, selectedBank.principal_balance ?? 0))}</div>
-                        </div>
-
-                        <div className="flex justify-between">
-                          <div className="text-slate-600">Remaining</div>
+                          <div className="text-slate-600">Max loan</div>
                           <div className="font-mono">
-                            {fmtMoney(
-                              selectedBank.remaining_loan_amount ??
-                                Math.max(0, selectedBank.max_loan_amount - Math.max(0, selectedBank.principal_balance ?? 0))
-                            )}
+                            {selectedBank.max_loan_amount == null ? "-" : fmtMoney(selectedBank.max_loan_amount)}
                           </div>
                         </div>
 
-                        <div className="pt-1">
-                          <div className="flex items-center justify-between text-xs text-slate-600">
-                            <div>Utilization</div>
-                            <div className="font-mono">
-                              {Math.min(
-                                100,
-                                Math.max(
-                                  0,
-                                  selectedBank.loan_utilization_percent ??
-                                    ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
-                                )
-                              ).toFixed(1)}
-                              %
+                        {selectedBank.max_loan_amount != null ? (
+                          <>
+                            <div className="flex justify-between">
+                              <div className="text-slate-600">Used</div>
+                              <div className="font-mono">{fmtMoney(Math.max(0, selectedBank.principal_balance ?? 0))}</div>
                             </div>
-                          </div>
 
-                          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
-                            <div
-                              className="h-2 rounded-full bg-slate-900"
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  Math.max(
-                                    0,
-                                    selectedBank.loan_utilization_percent ??
-                                      ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
-                                  )
-                                )}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    ) : null}
+                            <div className="flex justify-between">
+                              <div className="text-slate-600">Remaining</div>
+                              <div className="font-mono">
+                                {fmtMoney(
+                                  selectedBank.remaining_loan_amount ??
+                                    Math.max(0, selectedBank.max_loan_amount - Math.max(0, selectedBank.principal_balance ?? 0))
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="pt-1">
+                              <div className="flex items-center justify-between text-xs text-slate-600">
+                                <div>Utilization</div>
+                                <div className="font-mono">
+                                  {Math.min(
+                                    100,
+                                    Math.max(
+                                      0,
+                                      selectedBank.loan_utilization_percent ??
+                                        ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
+                                    )
+                                  ).toFixed(1)}
+                                  %
+                                </div>
+                              </div>
+
+                              <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
+                                <div
+                                  className="h-2 rounded-full bg-slate-900"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      Math.max(
+                                        0,
+                                        selectedBank.loan_utilization_percent ??
+                                          ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
+                                      )
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 )}
               </CardBody>
@@ -473,7 +468,6 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
 }
 
 function Ledger(props: { bankId: number; onError: (e: string) => void }) {
-  const toast = useToast();
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -762,8 +756,6 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
   const [loading, setLoading] = useState(false);
-
-  const toast = useToast();
 
   return (
     <div className="space-y-5">
