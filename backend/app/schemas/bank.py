@@ -25,5 +25,9 @@ class BankOut(BaseModel):
     current_kibor_effective_date: date | None = None
     current_total_rate_percent: float | None = None
 
+    principal_balance: float = 0.0
+    remaining_loan_amount: float | None = None
+    loan_utilization_percent: float | None = None
+
     class Config:
         from_attributes = True

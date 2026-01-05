@@ -4,7 +4,6 @@ import {
   Building2,
   Receipt,
   LineChart,
-  Percent,
   Download,
   Users,
   Trash2,
@@ -14,19 +13,11 @@ import {
 import * as api from "./api";
 import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast } from "./ui";
 
-type Tab = "ledger" | "transactions" | "rates" | "report" | "users" | "audit";
+type Tab = "ledger" | "transactions" | "report" | "users" | "audit";
 
 function fmtMoney(n: number) {
   if (Number.isNaN(n)) return "-";
   return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
-}
-
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
 }
 
 export default function App() {
@@ -104,7 +95,7 @@ export default function App() {
             <div>
               <div className="text-sm font-semibold text-slate-900">Finance dashboard</div>
               <div className="text-xs text-slate-500">
-                Role: <span className="font-mono">{role}</span>
+                Role: <span className="font-mono">{role === "user" ? "viewer" : role}</span>
               </div>
             </div>
           </div>
@@ -146,7 +137,6 @@ export default function App() {
           <div className="space-y-3">
             <NavButton active={tab === "ledger"} onClick={() => setTab("ledger")} icon={<LineChart className="h-4 w-4" />} text="Ledger" />
             <NavButton active={tab === "transactions"} onClick={() => setTab("transactions")} icon={<Receipt className="h-4 w-4" />} text="Transactions" />
-            <NavButton active={tab === "rates"} onClick={() => setTab("rates")} icon={<Percent className="h-4 w-4" />} text="Rates" />
             <NavButton active={tab === "report"} onClick={() => setTab("report")} icon={<Download className="h-4 w-4" />} text="Export report" />
             {isAdmin ? <NavButton active={tab === "users"} onClick={() => setTab("users")} icon={<Users className="h-4 w-4" />} text="Users" /> : null}
             {isAdmin ? (
@@ -203,8 +193,62 @@ export default function App() {
 
                     <div className="flex justify-between">
                       <div className="text-slate-600">Max loan</div>
-                      <div className="font-mono">{selectedBank.max_loan_amount ?? "-"}</div>
+                      <div className="font-mono">
+                        {selectedBank.max_loan_amount == null ? "-" : fmtMoney(selectedBank.max_loan_amount)}
+                      </div>
                     </div>
+
+                    {selectedBank.max_loan_amount != null ? (
+                      <>
+                        <div className="flex justify-between">
+                          <div className="text-slate-600">Used</div>
+                          <div className="font-mono">{fmtMoney(Math.max(0, selectedBank.principal_balance ?? 0))}</div>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <div className="text-slate-600">Remaining</div>
+                          <div className="font-mono">
+                            {fmtMoney(
+                              selectedBank.remaining_loan_amount ??
+                                Math.max(0, selectedBank.max_loan_amount - Math.max(0, selectedBank.principal_balance ?? 0))
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="pt-1">
+                          <div className="flex items-center justify-between text-xs text-slate-600">
+                            <div>Utilization</div>
+                            <div className="font-mono">
+                              {Math.min(
+                                100,
+                                Math.max(
+                                  0,
+                                  selectedBank.loan_utilization_percent ??
+                                    ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
+                                )
+                              ).toFixed(1)}
+                              %
+                            </div>
+                          </div>
+
+                          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
+                            <div
+                              className="h-2 rounded-full bg-slate-900"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  Math.max(
+                                    0,
+                                    selectedBank.loan_utilization_percent ??
+                                      ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
+                                  )
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 )}
               </CardBody>
@@ -232,8 +276,6 @@ export default function App() {
               <Ledger bankId={selectedBankId} onError={setError} />
             ) : tab === "transactions" ? (
               <Transactions bankId={selectedBankId} role={role} onError={setError} />
-            ) : tab === "rates" ? (
-              <Rates bankId={selectedBankId} role={role} onError={setError} onRatesChanged={() => refreshBanks(false)} />
             ) : tab === "report" ? (
               <Report bankId={selectedBankId} onError={setError} />
             ) : tab === "users" ? (
@@ -565,6 +607,7 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
         </Button>
       </div>
 
+      {isAdmin ? (
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Add transaction</div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -616,7 +659,13 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
             Add
           </Button>
         </div>
-      </div>
+      </div>      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="text-sm text-slate-600">You have view-only access.</div>
+        </div>
+      )}
+
+      
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Transactions</div>
@@ -690,167 +739,6 @@ function Transactions(props: { bankId: number; role: string; onError: (e: string
   );
 }
 
-function Rates(props: { bankId: number; role: string; onError: (e: string) => void; onRatesChanged?: () => void }) {
-  const toast = useToast();
-  const confirm = useConfirm();
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const defaultDate = `${yyyy}-${mm}-${dd}`;
-
-  const [rows, setRows] = useState<api.RateOut[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
-  const [annualRate, setAnnualRate] = useState<string>("");
-  const [tenor, setTenor] = useState<"1" | "3" | "6">("1");
-
-  const isAdmin = props.role === "admin";
-
-  async function refresh() {
-    props.onError("");
-    setLoading(true);
-    try {
-      const out = await api.listRates(props.bankId);
-      setRows(out);
-      props.onRatesChanged?.();
-    } catch (e: any) {
-      props.onError(e?.message || "failed_to_load_rates");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    refresh();
-  }, [props.bankId]);
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-900">Add rate</div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div>
-            <Label>Effective date</Label>
-            <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
-          </div>
-          <div>
-            <Label>Tenor</Label>
-            <Select value={tenor} onChange={(e) => setTenor(e.target.value as any)}>
-              <option value="1">1 month</option>
-              <option value="3">3 months</option>
-              <option value="6">6 months</option>
-            </Select>
-          </div>
-          <div>
-            <Label>Annual rate %</Label>
-            <Input value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} placeholder="12.5" inputMode="decimal" />
-          </div>
-          <div className="flex items-end">
-            <Button
-              onClick={async () => {
-                props.onError("");
-                try {
-                  const parsed = Number(annualRate);
-                  if (!Number.isFinite(parsed)) throw new Error("rate_invalid");
-                  await api.addRate(props.bankId, {
-                    effective_date: effectiveDate,
-                    tenor_months: Number(tenor) as any,
-                    annual_rate_percent: parsed,
-                  });
-                  toast.success("Rate row added.");
-                  setAnnualRate("");
-                  await refresh();
-                } catch (e: any) {
-                  props.onError(e?.message || "failed_to_add_rate");
-                }
-              }}
-              disabled={!isAdmin}
-              title={!isAdmin ? "Admin only" : ""}
-            >
-              Add
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-900">Rates</div>
-        <Table>
-          <thead>
-            <tr>
-              <Th>Status</Th>
-              <Th>Tenor</Th>
-              <Th>Effective date</Th>
-              <Th>Annual rate %</Th>
-              {isAdmin ? <Th /> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <Td colSpan={isAdmin ? 5 : 4} className="text-slate-600">
-                  No rates yet.
-                </Td>
-              </tr>
-            ) : (
-              rows.map((r, idx) => (
-                <tr key={r.id}>
-                  <Td>
-                    {idx === 0 ? (
-                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-                        Current
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
-                  </Td>
-                  <Td className="font-mono">{r.tenor_months}m</Td>
-                  <Td>{r.effective_date}</Td>
-                  <Td className="font-mono">{fmtMoney(r.annual_rate_percent)}</Td>
-                  {isAdmin ? (
-                    <Td className="text-right">
-                      <Button
-                        kind="danger"
-                        size="sm"
-                        onClick={async () => {
-                          props.onError("");
-                          const ok = await confirm({
-                            title: "Delete rate row?",
-                            body: "This will permanently remove the rate row.",
-                            confirmText: "Delete",
-                            danger: true,
-                          });
-                          if (!ok) return;
-
-                          try {
-                            await api.deleteRate(props.bankId, r.id);
-                            toast.success("Rate row deleted.");
-                            await refresh();
-                          } catch (e: any) {
-                            props.onError(e?.message || "failed_to_delete_rate");
-                            toast.error(e?.message || "Failed to delete rate row.");
-                          }
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </Button>
-                    </Td>
-                  ) : null}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </Table>
-      </div>
-
-      <div className="text-sm text-slate-600">Ledger math uses these rates + bank additional rate to calculate daily markup.</div>
-    </div>
-  );
-}
-
 function Report(props: { bankId: number; onError: (e: string) => void }) {
   const today = new Date();
   const yyyy = today.getFullYear();
@@ -915,7 +803,7 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"admin" | "user">("user");
+  const [role, setRole] = useState<"admin" | "viewer">("viewer");
 
   async function refresh() {
     props.onError("");
@@ -959,7 +847,7 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
           <div>
             <Label>Role</Label>
             <Select value={role} onChange={(e) => setRole(e.target.value as any)}>
-              <option value="user">user</option>
+              <option value="viewer">viewer</option>
               <option value="admin">admin</option>
             </Select>
           </div>
@@ -972,7 +860,7 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
                   toast.success("User created.");
                   setUsername("");
                   setPassword("");
-                  setRole("user");
+                  setRole("viewer");
                   await refresh();
                 } catch (e: any) {
                   props.onError(e?.message || "failed_to_create_user");

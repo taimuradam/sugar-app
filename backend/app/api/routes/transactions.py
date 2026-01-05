@@ -28,7 +28,7 @@ def list_txs(
     return s.execute(q).scalars().all()
 
 @router.post("", response_model=TxOut)
-def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(current_user)):
+def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(require_admin)):
     if body.category == "principal" and body.amount > 0:
         st = get_settings_for_year(s, bank_id, body.date.year)
         if st and st.max_loan_amount is not None:

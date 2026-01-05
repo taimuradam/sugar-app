@@ -13,27 +13,23 @@ export type BankOut = {
   additional_rate: number | null;
   kibor_placeholder_rate_percent: number;
   max_loan_amount: number | null;
+
   current_kibor_rate_percent?: number | null;
   current_kibor_effective_date?: string | null;
   current_total_rate_percent?: number | null;
-};
 
-export type RateOut = {
-  id: number;
-  bank_id: number;
-  tenor_months: 1 | 3 | 6;
-  effective_date: string;
-  annual_rate_percent: number;
-  created_at?: string;
+  principal_balance?: number;
+  remaining_loan_amount?: number | null;
+  loan_utilization_percent?: number | null;
 };
 
 export type TxOut = {
   id: number;
   bank_id: number;
   date: string;
-  category: "principal" | "markup";
+  category: string;
   amount: number;
-  note: string | null;
+  note?: string | null;
   created_at?: string;
 };
 
@@ -53,8 +49,8 @@ export type AuditOut = {
   username: string;
   action: string;
   entity_type: string;
-  entity_id: number | null;
-  details: Record<string, any> | null;
+  entity_id?: number | null;
+  details?: any;
 };
 
 function getToken() {
@@ -78,38 +74,30 @@ export function setRole(r: string) {
   localStorage.setItem("role", r);
 }
 
-async function request<T>(path: string, init?: RequestInit) {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const headers: any = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_URL}${path}`, { ...init, headers: { ...headers, ...(init?.headers || {}) } });
 
+  const text = await res.text();
   if (!res.ok) {
-    let detail = `http_${res.status}`;
     try {
-      const data = await res.json();
-      if (data?.detail) detail = String(data.detail);
-    } catch {}
-    throw new Error(detail);
+      const j = JSON.parse(text);
+      throw new Error(j?.detail || "request_failed");
+    } catch {
+      throw new Error(text || "request_failed");
+    }
   }
-
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
 export async function login(username: string, password: string) {
-  const out = await request<TokenOut>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
+  const out = await request<TokenOut>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+  const role = out.role === "user" ? "viewer" : out.role;
   setToken(out.access_token);
-  setRole(out.role);
-  return out;
+  setRole(role);
+  return { ...out, role };
 }
 
 export async function listBanks() {
@@ -121,80 +109,73 @@ export async function createBank(body: {
   bank_type: string;
   kibor_tenor_months: 1 | 3 | 6;
   additional_rate?: number | null;
-  kibor_placeholder_rate_percent?: number;
+  kibor_placeholder_rate_percent: number;
   max_loan_amount?: number | null;
   year?: number | null;
 }) {
   return await request<BankOut>("/banks", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function listRates(bankId: number) {
-  return await request<RateOut[]>(`/banks/${bankId}/rates`);
-}
-
-export async function addRate(
-  bankId: number,
-  body: { effective_date: string; tenor_months: 1 | 3 | 6; annual_rate_percent: number }
-) {
-  return await request<RateOut>(`/banks/${bankId}/rates`, { method: "POST", body: JSON.stringify(body) });
-}
-
-export async function deleteRate(bankId: number, rateId: number) {
-  return await request<{ ok: boolean }>(`/banks/${bankId}/rates/${rateId}`, { method: "DELETE" });
-}
-
 export async function listTxs(bankId: number, start?: string, end?: string) {
   const qs = new URLSearchParams();
   if (start) qs.set("start", start);
   if (end) qs.set("end", end);
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return await request<TxOut[]>(`/banks/${bankId}/transactions${suffix}`);
+  const path = qs.toString()
+    ? `/banks/${bankId}/transactions?${qs.toString()}`
+    : `/banks/${bankId}/transactions`;
+  return await request<TxOut[]>(path);
 }
 
 export async function addTx(
   bankId: number,
-  body: { date: string; category: "principal" | "markup"; amount: number; note?: string | null }
+  body: { date: string; category: string; amount: number; note?: string | null }
 ) {
-  return await request<TxOut>(`/banks/${bankId}/transactions`, { method: "POST", body: JSON.stringify(body) });
+  return await request<TxOut>(`/banks/${bankId}/transactions`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function deleteTx(bankId: number, txId: number) {
-  return await request<{ ok: boolean }>(`/banks/${bankId}/transactions/${txId}`, { method: "DELETE" });
+  return await request<{ ok: boolean }>(`/banks/${bankId}/transactions/${txId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function ledger(bankId: number, start: string, end: string) {
-  return await request<LedgerRow[]>(
-    `/banks/${bankId}/ledger?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
-  );
+  const qs = new URLSearchParams({ start, end });
+  return await request<LedgerRow[]>(`/banks/${bankId}/ledger?${qs.toString()}`);
 }
 
+/** App.tsx uses this name */
 export async function downloadReport(bankId: number, start: string, end: string) {
+  const qs = new URLSearchParams({ start, end });
   const token = getToken();
-  const res = await fetch(`${API_URL}/banks/${bankId}/report?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+
+  const res = await fetch(`${API_URL}/banks/${bankId}/report?${qs.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
-  if (!res.ok) throw new Error(`http_${res.status}`);
 
-  const blob = await res.blob();
-  const cd = res.headers.get("content-disposition") || "";
-  const m = cd.match(/filename="([^"]+)"/);
-  const filename = m?.[1] || `bank_${bankId}_${start}_to_${end}.xlsx`;
-
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text);
+      throw new Error(j?.detail || "export_failed");
+    } catch {
+      throw new Error(text || "export_failed");
+    }
+  }
+  return await res.blob();
 }
+
+/** Optional newer name */
+export const exportReport = downloadReport;
 
 export async function listUsers() {
   return await request<UserOut[]>("/users");
 }
 
-export async function createUser(body: { username: string; password: string; role: "admin" | "user" }) {
+export async function createUser(body: { username: string; password: string; role: string }) {
   return await request<UserOut>("/users", { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -202,16 +183,7 @@ export async function deleteUser(userId: number) {
   return await request<{ ok: boolean }>(`/users/${userId}`, { method: "DELETE" });
 }
 
-export async function updateUser(userId: number, body: { password?: string; role?: "admin" | "user" }) {
-  return await request<UserOut>(`/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) });
-}
-
-export async function listAudit(params?: {
-  username?: string;
-  entity_type?: string;
-  action?: string;
-  limit?: number;
-}) {
+export async function listAudit(params?: { username?: string; entity_type?: string; action?: string; limit?: number }) {
   const qs = new URLSearchParams();
   if (params?.username) qs.set("username", params.username);
   if (params?.entity_type) qs.set("entity_type", params.entity_type);

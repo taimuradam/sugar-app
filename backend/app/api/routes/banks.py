@@ -1,60 +1,41 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 from datetime import date
-from app.models.rate import Rate
 from app.api.deps import db, current_user, require_admin
 from app.schemas.bank import BankCreate, BankOut
 from app.models.bank import Bank
 from app.models.bank_settings import BankSettings
+from app.models.transaction import Transaction
 from app.services.audit import log_event
 from app.services.bank_settings import resolve_year
 
 router = APIRouter(prefix="/banks", tags=["banks"])
 
 def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
-    today = date.today()
-
-    base_q = select(Rate).where(
-        Rate.bank_id == b.id,
-        Rate.tenor_months == st.kibor_tenor_months,
-    )
-
-    # 1) Prefer rate effective today or earlier
-    current_rate = (
-        s.execute(
-            base_q
-            .where(Rate.effective_date <= today)
-            .order_by(
-                Rate.effective_date.desc(),
-                Rate.created_at.desc(),
-                Rate.id.desc(),
-            )
-            .limit(1)
+    principal_sum = s.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(
+            Transaction.bank_id == b.id,
+            Transaction.category == "principal",
         )
-        .scalars()
-        .first()
-    )
+    ).scalar_one()
 
-    # 2) If none exist (e.g. only future-dated rows), fall back to newest rate
-    if not current_rate:
-        current_rate = (
-            s.execute(
-                base_q
-                .order_by(
-                    Rate.effective_date.desc(),
-                    Rate.created_at.desc(),
-                    Rate.id.desc(),
-                )
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+    principal_balance = float(principal_sum or 0)
 
-    current_kibor = float(current_rate.annual_rate_percent) if current_rate else None
+    max_loan = float(st.max_loan_amount) if st.max_loan_amount is not None else None
+    remaining = None
+    util = None
+    if max_loan is not None:
+        used = principal_balance if principal_balance > 0 else 0.0
+        remaining = max_loan - used
+        if remaining < 0:
+            remaining = 0.0
+        util = (used / max_loan * 100.0) if max_loan > 0 else 0.0
+
+    current_kibor = float(st.kibor_placeholder_rate_percent)
     addl = float(st.additional_rate) if st.additional_rate is not None else 0.0
-    current_total = (current_kibor + addl) if current_kibor is not None else None
+    current_total = current_kibor + addl
 
     return {
         "id": b.id,
@@ -65,9 +46,12 @@ def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
         "kibor_tenor_months": st.kibor_tenor_months,
         "additional_rate": float(st.additional_rate) if st.additional_rate is not None else None,
         "kibor_placeholder_rate_percent": float(st.kibor_placeholder_rate_percent),
-        "max_loan_amount": float(st.max_loan_amount) if st.max_loan_amount is not None else None,
+        "max_loan_amount": max_loan,
+        "principal_balance": principal_balance,
+        "remaining_loan_amount": remaining,
+        "loan_utilization_percent": util,
         "current_kibor_rate_percent": current_kibor,
-        "current_kibor_effective_date": current_rate.effective_date if current_rate else None,
+        "current_kibor_effective_date": None,
         "current_total_rate_percent": current_total,
     }
 

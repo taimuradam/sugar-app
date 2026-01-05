@@ -3,7 +3,6 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.models.transaction import Transaction
-from app.models.rate import Rate
 from app.models.bank import Bank
 from app.services.bank_settings import get_settings_for_year
 
@@ -18,18 +17,6 @@ def _to_dec(x) -> Decimal:
 def _borrow_date(txs: list[Transaction]) -> date | None:
     ds = [t.date for t in txs if t.category == "principal" and _to_dec(t.amount) > Decimal("0")]
     return min(ds) if ds else None
-
-def _rate_at(s: Session, bank_id: int, tenor: int, day: date) -> Decimal | None:
-    row = s.execute(
-        select(Rate).where(
-            Rate.bank_id == bank_id,
-            Rate.tenor_months == tenor,
-            Rate.effective_date <= day,
-        ).order_by(Rate.effective_date.desc(), Rate.id.desc())
-    ).scalars().first()
-    if not row:
-        return None
-    return _to_dec(row.annual_rate_percent)
 
 def compute_ledger(s: Session, bank_id: int, start: date, end: date):
     bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one_or_none()
@@ -63,9 +50,7 @@ def compute_ledger(s: Session, bank_id: int, start: date, end: date):
     if bank.bank_type == "islamic" and bd is not None:
         st0 = get_settings_for_year(s, bank_id, bd.year)
         if st0:
-            base = _rate_at(s, bank_id, st0.kibor_tenor_months, bd)
-            if base is None:
-                base = _to_dec(st0.kibor_placeholder_rate_percent)
+            base = _to_dec(st0.kibor_placeholder_rate_percent)
             addl = _to_dec(st0.additional_rate) if st0.additional_rate is not None else Decimal("0")
             locked_rate = base + addl
 
@@ -86,9 +71,7 @@ def compute_ledger(s: Session, bank_id: int, start: date, end: date):
         else:
             st = get_settings_for_year(s, bank_id, day.year)
             if st:
-                base = _rate_at(s, bank_id, st.kibor_tenor_months, day)
-                if base is None:
-                    base = _to_dec(st.kibor_placeholder_rate_percent)
+                base = _to_dec(st.kibor_placeholder_rate_percent)
                 addl = _to_dec(st.additional_rate) if st.additional_rate is not None else Decimal("0")
                 current_rate = base + addl
 

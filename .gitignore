@@ -18,3 +18,8 @@ dist/
 
 # ===== OS =====
 .DS_Store
+
+node_modules
+frontend/node_modules
+.venv
+backend/.venv

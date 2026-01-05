@@ -2,12 +2,12 @@ from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Literal
 
-Role = Literal["admin", "user"]
+Role = Literal["admin", "viewer", "user"]
 
 class UserCreate(BaseModel):
     username: str
     password: str
-    role: Role = "user"
+    role: Role = "viewer"
 
     @field_validator("username")
     @classmethod
@@ -27,9 +27,28 @@ class UserCreate(BaseModel):
             raise ValueError("password must be at least 6 characters")
         return v
 
+
+
+    @field_validator("role")
+    @classmethod
+    def role_normalize(cls, v: str):
+        v = (v or "").strip().lower()
+        if v == "user":
+            return "viewer"
+        return v
 class UserUpdate(BaseModel):
     password: str | None = None
     role: Role | None = None
+
+    @field_validator("role")
+    @classmethod
+    def role_normalize(cls, v: str | None):
+        if v is None:
+            return None
+        vv = str(v).strip().lower()
+        if vv == "user":
+            return "viewer"
+        return vv
 
     @field_validator("password")
     @classmethod
