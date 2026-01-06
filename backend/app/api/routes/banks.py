@@ -71,44 +71,38 @@ def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
             remaining = 0.0
         util = (used / max_loan * 100.0) if max_loan > 0 else 0.0
 
-        if not _is_islamic(b.bank_type):
-            target_day = adjust_to_last_business_day(date.today())
-
-            if st.kibor_tenor_months is not None:
-                latest = (
-                    s.execute(
-                        select(func.max(Rate.effective_date)).where(
-                            Rate.bank_id == b.id,
-                            Rate.tenor_months == st.kibor_tenor_months,
-                        )
-                    )
-                    .scalar_one()
-                )
-            else:
-                latest = None
-
-            if latest is None or latest < target_day:
-                _ensure_latest_kibor_rates_for_bank(s, b.id, target_day)
-                s.commit()
-
-    today = date.today()
-    current_rate = (
+    borrow_date = (
         s.execute(
-            select(Rate)
-            .where(
-                Rate.bank_id == b.id,
-                Rate.tenor_months == st.kibor_tenor_months,
-                Rate.effective_date <= today,
+            select(func.min(Transaction.date)).where(
+                Transaction.bank_id == b.id,
+                Transaction.category == "principal",
+                Transaction.amount > 0,
             )
-            .order_by(Rate.effective_date.desc(), Rate.created_at.desc(), Rate.id.desc())
-            .limit(1)
         )
-        .scalars()
-        .first()
+        .scalar_one()
     )
 
-    current_kibor = float(current_rate.annual_rate_percent) if current_rate else None
-    current_eff = current_rate.effective_date if current_rate else None
+    if borrow_date is None:
+        current_kibor = None
+        current_eff = None
+    else:
+        day_for_rate = borrow_date if _is_islamic(b.bank_type) else date.today()
+        current_rate = (
+            s.execute(
+                select(Rate)
+                .where(
+                    Rate.bank_id == b.id,
+                    Rate.tenor_months == st.kibor_tenor_months,
+                    Rate.effective_date <= day_for_rate,
+                )
+                .order_by(Rate.effective_date.desc(), Rate.created_at.desc(), Rate.id.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        current_kibor = float(current_rate.annual_rate_percent) if current_rate else None
+        current_eff = current_rate.effective_date if current_rate else None
 
     addl = float(st.additional_rate) if st.additional_rate is not None else None
     current_total = (current_kibor + (addl or 0.0)) if current_kibor is not None else None
@@ -183,24 +177,6 @@ def create_bank(body: BankCreate, s: Session = Depends(db), u=Depends(require_ad
         kibor_placeholder_rate_percent=body.kibor_placeholder_rate_percent,
         max_loan_amount=body.max_loan_amount,
     )
-    s.add(st)
-    s.commit()
-    s.refresh(st)
-
-    creation_day = adjust_to_last_business_day(date.today())
-    kib = get_kibor_offer_rates(creation_day)
-
-    for tenor_months, offer in kib.by_tenor_months().items():
-        s.add(
-            Rate(
-                bank_id=b.id,
-                tenor_months=tenor_months,
-                effective_date=kib.effective_date,
-                annual_rate_percent=offer,
-            )
-        )
-
-    st.kibor_placeholder_rate_percent = float(kib.by_tenor_months().get(int(st.kibor_tenor_months), 0.0))
     s.add(st)
     s.commit()
     s.refresh(st)

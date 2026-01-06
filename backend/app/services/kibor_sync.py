@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
+from app.models.transaction import Transaction
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -30,35 +31,59 @@ _last_probe_latest: date | None = None
 
 def backfill_missing_kibor_rates(s: Session) -> None:
     target_day = adjust_to_last_business_day(date.today())
-    latest: date | None = s.execute(select(func.max(Rate.effective_date))).scalar_one()
-
-    if latest is None:
-        start = target_day
-    else:
-        start = latest + timedelta(days=1)
 
     banks = s.execute(select(Bank)).scalars().all()
-    conventional_bank_ids = [b.id for b in banks if not _is_islamic(b.bank_type)]
-    if not conventional_bank_ids:
+    conventional_banks = [b for b in banks if not _is_islamic(b.bank_type)]
+    if not conventional_banks:
         return
 
-    day = start
+    borrow_dates: dict[int, date] = {}
+    for b in conventional_banks:
+        bd = (
+            s.execute(
+                select(func.min(Transaction.date)).where(
+                    Transaction.bank_id == b.id,
+                    Transaction.category == "principal",
+                    Transaction.amount > 0,
+                )
+            )
+            .scalar_one()
+        )
+        if bd is not None:
+            borrow_dates[b.id] = bd
+
+    if not borrow_dates:
+        return
+
+    start_by_bank: dict[int, date] = {}
+    for bank_id, bd in borrow_dates.items():
+        latest_for_bank: date | None = (
+            s.execute(select(func.max(Rate.effective_date)).where(Rate.bank_id == bank_id)).scalar_one()
+        )
+        if latest_for_bank is None:
+            start_by_bank[bank_id] = bd
+        else:
+            start_by_bank[bank_id] = max(bd, latest_for_bank + timedelta(days=1))
+
+    global_start = min(start_by_bank.values())
+
+    day = global_start
     while day <= target_day:
         if not _is_business_day(day):
             day = day + timedelta(days=1)
             continue
 
-        kib = get_kibor_offer_rates(day)
-        eff = kib.effective_date
-
-        if latest is not None and eff <= latest:
+        active_bank_ids = [bid for bid, st in start_by_bank.items() if day >= st]
+        if not active_bank_ids:
             day = day + timedelta(days=1)
             continue
 
+        kib = get_kibor_offer_rates(day)
+        eff = kib.effective_date
         rates_by_tenor = kib.by_tenor_months()
 
         values = []
-        for bank_id in conventional_bank_ids:
+        for bank_id in active_bank_ids:
             for tenor_months, offer in rates_by_tenor.items():
                 values.append(
                     {
@@ -78,7 +103,6 @@ def backfill_missing_kibor_rates(s: Session) -> None:
             s.execute(stmt)
             s.commit()
 
-        latest = eff if latest is None or eff > latest else latest
         day = day + timedelta(days=1)
 
 

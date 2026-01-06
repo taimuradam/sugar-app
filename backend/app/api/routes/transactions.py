@@ -8,8 +8,15 @@ from app.models.transaction import Transaction
 from app.models.bank_settings import BankSettings
 from app.services.audit import log_event
 from app.services.bank_settings import get_settings_for_year
+from app.models.bank import Bank
+from app.models.rate import Rate
+from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
+from app.services.kibor_sync import maybe_refresh_kibor_rates
 
 router = APIRouter(prefix="/banks/{bank_id}/transactions", tags=["transactions"])
+
+def _is_islamic(bank_type: str) -> bool:
+    return (bank_type or "").strip().lower() == "islamic"
 
 @router.get("", response_model=list[TxOut])
 def list_txs(
@@ -45,6 +52,44 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(req
     s.add(t)
     s.commit()
     s.refresh(t)
+
+    if t.category == "principal" and float(t.amount) > 0:
+        borrow_date = (
+            s.execute(
+                select(func.min(Transaction.date)).where(
+                    Transaction.bank_id == bank_id,
+                    Transaction.category == "principal",
+                    Transaction.amount > 0,
+                )
+            )
+            .scalar_one()
+        )
+
+        if borrow_date is not None and t.date == borrow_date:
+            bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one_or_none()
+            st = get_settings_for_year(s, bank_id, borrow_date.year)
+
+            if bank and st:
+                rate_day = adjust_to_last_business_day(borrow_date)
+                kib = get_kibor_offer_rates(rate_day)
+
+                for tenor_months, offer in kib.by_tenor_months().items():
+                    s.add(
+                        Rate(
+                            bank_id=bank_id,
+                            tenor_months=int(tenor_months),
+                            effective_date=kib.effective_date,
+                            annual_rate_percent=offer,
+                        )
+                    )
+
+                base_for_tenor = float(kib.by_tenor_months().get(int(st.kibor_tenor_months), 0.0))
+                st.kibor_placeholder_rate_percent = base_for_tenor
+                s.add(st)
+                s.commit()
+
+                if not _is_islamic(bank.bank_type):
+                    maybe_refresh_kibor_rates(s)
 
     log_event(
         s,

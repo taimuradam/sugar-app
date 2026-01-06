@@ -172,7 +172,7 @@ export default function App() {
                     <div className="flex justify-between">
                       <div className="text-slate-600">KIBOR rate %</div>
                       <div className="font-mono">
-                        {selectedBank.current_kibor_rate_percent ?? selectedBank.kibor_placeholder_rate_percent}
+                        {selectedBank.current_kibor_rate_percent == null ? "—" : selectedBank.current_kibor_rate_percent}
                       </div>
                     </div>
 

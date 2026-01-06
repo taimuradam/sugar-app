@@ -93,12 +93,23 @@ def compute_ledger(s: Session, bank_id: int, start: date, end: date):
     day = calc_start
 
     locked_rate: Decimal | None = None
+    prefetched_rates: dict[int, list[Rate]] | None = None
+
     if bank.bank_type == "islamic" and bd is not None:
         st0 = get_settings_for_year(s, bank_id, bd.year)
         if st0:
-            base = _to_dec(st0.kibor_placeholder_rate_percent)
+            prefetched_rates = _prefetch_rates(s, bank_id, bd)
+            placeholder = _to_dec(st0.kibor_placeholder_rate_percent)
+            locked_base = _latest_rate_percent_for_day(
+                prefetched_rates,
+                int(st0.kibor_tenor_months),
+                bd,
+                placeholder,
+            )
             addl = _to_dec(st0.additional_rate) if st0.additional_rate is not None else Decimal("0")
-            locked_rate = base + addl
+            locked_rate = locked_base + addl
+    else:
+        prefetched_rates = _prefetch_rates(s, bank_id, end)
 
     prefetched_rates: dict[int, list[Rate]] | None = None
     if bank.bank_type != "islamic":
