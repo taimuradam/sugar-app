@@ -11,8 +11,44 @@ from app.services.audit import log_event
 from app.services.bank_settings import resolve_year
 from app.models.rate import Rate
 from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
+from app.services.kibor_sync import maybe_refresh_kibor_rates
 
 router = APIRouter(prefix="/banks", tags=["banks"])
+
+def _is_islamic(bank_type: str) -> bool:
+    return (bank_type or "").strip().lower() == "islamic"
+
+
+def _ensure_latest_kibor_rates_for_bank(s: Session, bank_id: int, target_day: date) -> None:
+    kib = get_kibor_offer_rates(target_day)
+    rates = kib.by_tenor_months()
+
+    for tenor_months, offer in rates.items():
+        existing = (
+            s.execute(
+                select(Rate).where(
+                    Rate.bank_id == bank_id,
+                    Rate.tenor_months == int(tenor_months),
+                    Rate.effective_date == kib.effective_date,
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+        if existing:
+            if float(existing.annual_rate_percent) != float(offer):
+                existing.annual_rate_percent = offer
+                s.add(existing)
+        else:
+            s.add(
+                Rate(
+                    bank_id=bank_id,
+                    tenor_months=int(tenor_months),
+                    effective_date=kib.effective_date,
+                    annual_rate_percent=offer,
+                )
+            )
 
 def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
     principal_sum = s.execute(
@@ -34,6 +70,26 @@ def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
         if remaining < 0:
             remaining = 0.0
         util = (used / max_loan * 100.0) if max_loan > 0 else 0.0
+
+        if not _is_islamic(b.bank_type):
+            target_day = adjust_to_last_business_day(date.today())
+
+            if st.kibor_tenor_months is not None:
+                latest = (
+                    s.execute(
+                        select(func.max(Rate.effective_date)).where(
+                            Rate.bank_id == b.id,
+                            Rate.tenor_months == st.kibor_tenor_months,
+                        )
+                    )
+                    .scalar_one()
+                )
+            else:
+                latest = None
+
+            if latest is None or latest < target_day:
+                _ensure_latest_kibor_rates_for_bank(s, b.id, target_day)
+                s.commit()
 
     today = date.today()
     current_rate = (
@@ -77,6 +133,7 @@ def _bank_out(s: Session, b: Bank, st: BankSettings) -> dict:
 
 @router.get("", response_model=list[BankOut])
 def list_banks(s: Session = Depends(db), u=Depends(current_user)):
+    maybe_refresh_kibor_rates(s)
     banks = s.execute(select(Bank).order_by(Bank.name.asc())).scalars().all()
     out = []
     for b in banks:

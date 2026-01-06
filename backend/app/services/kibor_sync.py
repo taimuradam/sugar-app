@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+import logging
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -16,43 +19,97 @@ def _is_islamic(bank_type: str) -> bool:
     return (bank_type or "").strip().lower() == "islamic"
 
 
-def sync_kibor_rates_once(*, for_date: date | None = None) -> None:
-    today = for_date or date.today()
-    target = adjust_to_last_business_day(today)
+def _is_business_day(d: date) -> bool:
+    return d.weekday() < 5
 
-    s = SessionLocal()
-    try:
-        banks = s.execute(select(Bank)).scalars().all()
-        conventional_ids = [b.id for b in banks if not _is_islamic(b.bank_type)]
-        if not conventional_ids:
-            return
 
-        rates = get_kibor_offer_rates(target)
+_last_probe_day: date | None = None
+_last_probe_ts: datetime | None = None
+_last_probe_latest: date | None = None
 
-        for bank_id in conventional_ids:
-            for tenor_months, offer in rates.by_tenor_months().items():
-                exists = s.execute(
-                    select(Rate.id).where(
-                        Rate.bank_id == bank_id,
-                        Rate.tenor_months == tenor_months,
-                        Rate.effective_date == rates.effective_date,
-                    )
-                ).scalar_one_or_none()
-                if exists is not None:
-                    continue
 
-                s.add(
-                    Rate(
-                        bank_id=bank_id,
-                        tenor_months=tenor_months,
-                        effective_date=rates.effective_date,
-                        annual_rate_percent=offer,
-                    )
+def backfill_missing_kibor_rates(s: Session) -> None:
+    target_day = adjust_to_last_business_day(date.today())
+    latest: date | None = s.execute(select(func.max(Rate.effective_date))).scalar_one()
+
+    if latest is None:
+        start = target_day
+    else:
+        start = latest + timedelta(days=1)
+
+    banks = s.execute(select(Bank)).scalars().all()
+    conventional_bank_ids = [b.id for b in banks if not _is_islamic(b.bank_type)]
+    if not conventional_bank_ids:
+        return
+
+    day = start
+    while day <= target_day:
+        if not _is_business_day(day):
+            day = day + timedelta(days=1)
+            continue
+
+        kib = get_kibor_offer_rates(day)
+        eff = kib.effective_date
+
+        if latest is not None and eff <= latest:
+            day = day + timedelta(days=1)
+            continue
+
+        rates_by_tenor = kib.by_tenor_months()
+
+        values = []
+        for bank_id in conventional_bank_ids:
+            for tenor_months, offer in rates_by_tenor.items():
+                values.append(
+                    {
+                        "bank_id": bank_id,
+                        "tenor_months": int(tenor_months),
+                        "effective_date": eff,
+                        "annual_rate_percent": offer,
+                    }
                 )
 
-        s.commit()
-    finally:
-        s.close()
+        if values:
+            stmt = (
+                pg_insert(Rate)
+                .values(values)
+                .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
+            )
+            s.execute(stmt)
+            s.commit()
+
+        latest = eff if latest is None or eff > latest else latest
+        day = day + timedelta(days=1)
+
+
+def maybe_refresh_kibor_rates(s: Session) -> None:
+    target_day = adjust_to_last_business_day(date.today())
+    latest: date | None = s.execute(select(func.max(Rate.effective_date))).scalar_one()
+
+    if latest is not None and latest >= target_day:
+        return
+
+    global _last_probe_day, _last_probe_ts, _last_probe_latest
+
+    now = datetime.utcnow()
+    if (
+        _last_probe_day == target_day
+        and _last_probe_latest == latest
+        and _last_probe_ts is not None
+        and (now - _last_probe_ts) < timedelta(minutes=15)
+    ):
+        return
+
+    _last_probe_day = target_day
+    _last_probe_latest = latest
+    _last_probe_ts = now
+
+    backfill_missing_kibor_rates(s)
+
+
+def sync_kibor_rates_once() -> None:
+    with SessionLocal() as s:
+        maybe_refresh_kibor_rates(s)
 
 
 async def kibor_sync_loop() -> None:
@@ -60,12 +117,18 @@ async def kibor_sync_loop() -> None:
         return
 
     interval = int(getattr(settings, "kibor_sync_interval_seconds", 3600) or 3600)
-    await asyncio.sleep(3)
+
+    await asyncio.sleep(1)
+
+    try:
+        sync_kibor_rates_once()
+    except Exception:
+        logging.exception("kibor_sync_startup_backfill_failed")
 
     while True:
         try:
             sync_kibor_rates_once()
         except Exception:
-            pass
+            logging.exception("kibor_sync_failed")
 
         await asyncio.sleep(max(60, interval))
