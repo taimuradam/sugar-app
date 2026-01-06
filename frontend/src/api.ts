@@ -14,6 +14,9 @@ export type BankOut = {
   kibor_placeholder_rate_percent: number;
   max_loan_amount: number | null;
 
+  kibor_started?: boolean;
+  kibor_start_date?: string | null;
+
   current_kibor_rate_percent?: number | null;
   current_kibor_effective_date?: string | null;
   current_total_rate_percent?: number | null;
