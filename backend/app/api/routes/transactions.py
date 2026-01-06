@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.api.deps import db, current_user, require_admin
 from app.schemas.transaction import TxCreate, TxOut
 from app.models.transaction import Transaction
-from app.models.bank_settings import BankSettings
 from app.services.audit import log_event
 from app.services.bank_settings import get_settings_for_year
 from app.models.bank import Bank
@@ -15,8 +15,10 @@ from app.services.kibor_sync import maybe_refresh_kibor_rates
 
 router = APIRouter(prefix="/banks/{bank_id}/transactions", tags=["transactions"])
 
+
 def _is_islamic(bank_type: str) -> bool:
     return (bank_type or "").strip().lower() == "islamic"
+
 
 @router.get("", response_model=list[TxOut])
 def list_txs(
@@ -33,6 +35,7 @@ def list_txs(
         q = q.where(Transaction.date <= end)
     q = q.order_by(Transaction.date.asc(), Transaction.id.asc())
     return s.execute(q).scalars().all()
+
 
 @router.post("", response_model=TxOut)
 def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(require_admin)):
@@ -65,31 +68,40 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(req
             .scalar_one()
         )
 
-        if borrow_date is not None and t.date == borrow_date:
-            bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one_or_none()
-            st = get_settings_for_year(s, bank_id, borrow_date.year)
+        bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one_or_none()
 
-            if bank and st:
+        if borrow_date is not None and t.date == borrow_date and bank is not None:
+            st = get_settings_for_year(s, bank_id, borrow_date.year)
+            if st is not None:
                 rate_day = adjust_to_last_business_day(borrow_date)
                 kib = get_kibor_offer_rates(rate_day)
 
+                values = []
                 for tenor_months, offer in kib.by_tenor_months().items():
-                    s.add(
-                        Rate(
-                            bank_id=bank_id,
-                            tenor_months=int(tenor_months),
-                            effective_date=kib.effective_date,
-                            annual_rate_percent=offer,
-                        )
+                    values.append(
+                        {
+                            "bank_id": bank_id,
+                            "tenor_months": int(tenor_months),
+                            "effective_date": kib.effective_date,
+                            "annual_rate_percent": offer,
+                        }
                     )
+
+                if values:
+                    stmt = (
+                        pg_insert(Rate)
+                        .values(values)
+                        .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
+                    )
+                    s.execute(stmt)
 
                 base_for_tenor = float(kib.by_tenor_months().get(int(st.kibor_tenor_months), 0.0))
                 st.kibor_placeholder_rate_percent = base_for_tenor
                 s.add(st)
                 s.commit()
 
-                if not _is_islamic(bank.bank_type):
-                    maybe_refresh_kibor_rates(s)
+        if bank is not None and not _is_islamic(bank.bank_type):
+            maybe_refresh_kibor_rates(s)
 
     log_event(
         s,
@@ -107,29 +119,3 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(req
     )
 
     return t
-
-@router.delete("/{tx_id}")
-def delete_tx(bank_id: int, tx_id: int, s: Session = Depends(db), u=Depends(require_admin)):
-    t = s.execute(select(Transaction).where(Transaction.id == tx_id, Transaction.bank_id == bank_id)).scalar_one_or_none()
-    if not t:
-        raise HTTPException(status_code=404, detail="tx_not_found")
-    
-    details = {
-        "bank_id": bank_id,
-        "date": str(t.date),
-        "category": t.category,
-        "amount": str(t.amount),
-        "note": t.note,
-    }
-    s.delete(t)
-    s.commit()
-
-    log_event(
-        s,
-        username=u.get("sub"),
-        action="transaction.delete",
-        entity_type="transaction",
-        entity_id=tx_id,
-        details=details,
-    )
-    return {"ok": True}
