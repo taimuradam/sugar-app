@@ -58,6 +58,20 @@ export function Button(
   return <button {...rest} className={cx(base, sizes, kinds, className)} />;
 }
 
+export function Progress(props: { value: number; label?: string }) {
+  const v = Math.max(0, Math.min(100, props.value || 0));
+  return (
+    <div className="w-full">
+      {props.label ? <div className="mb-2 text-xs font-semibold text-slate-700">{props.label}</div> : null}
+      <div className="h-2 w-full rounded-full bg-slate-200">
+        <div className="h-2 rounded-full bg-slate-900" style={{ width: `${v}%` }} />
+      </div>
+      <div className="mt-1 text-[11px] tabular-nums text-slate-600">{v}%</div>
+    </div>
+  );
+}
+
+
 export function Label(props: React.HTMLAttributes<HTMLDivElement>) {
   const { className, ...rest } = props;
   return <div {...rest} className={cx("mb-1 text-xs font-medium text-slate-600", className)} />;

@@ -101,7 +101,11 @@ def backfill_missing_kibor_rates(s: Session) -> None:
             continue
 
         kib = get_kibor_offer_rates(day)
-        eff = kib.effective_date
+
+        # Store rates under the requested business day (not the resolved PDF date),
+        # so we don't leave gaps that cause repeated "missing day" backfills.
+        eff = day
+
         rates_by_tenor = kib.by_tenor_months()
 
         values: list[dict] = []

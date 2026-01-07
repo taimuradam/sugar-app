@@ -10,6 +10,7 @@ from app.api.routes.ledger import router as ledger_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.users import router as users_router
 from app.api.routes.audit import router as audit_router
+from app.api.routes.backfill import router as backfill_router
 from app.services.kibor_sync import kibor_sync_loop
 
 app = FastAPI(title="Finance API")
@@ -30,6 +31,7 @@ app.include_router(ledger_router)
 app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(audit_router)
+app.include_router(backfill_router)
 
 
 @app.on_event("startup")

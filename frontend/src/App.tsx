@@ -11,7 +11,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import * as api from "./api";
-import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast } from "./ui";
+import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast, Progress } from "./ui";
 
 type Tab = "ledger" | "transactions" | "report" | "users" | "audit";
 
@@ -313,6 +313,13 @@ function LoginCard(props: { error: string; onError: (e: string) => void; onLogin
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("admin");
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   return (
     <Card className="self-center">
@@ -360,6 +367,13 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
   const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
   const toast = useToast();
 
   return (
@@ -476,15 +490,28 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
   const [end, setEnd] = useState(defaultEnd);
   const [rows, setRows] = useState<api.LedgerRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   async function refresh() {
     props.onError("");
     setLoading(true);
     try {
+      setBackfillStatus(null);
       const out = await api.ledger(props.bankId, start, end);
       setRows(out);
     } catch (e: any) {
-      props.onError(e?.message || "failed_to_load_ledger");
+      if (e?.name === "BackfillRunningError") {
+        setRows([]);
+        setBackfillStatus(e.status);
+      } else {
+        props.onError(e?.message || "failed_to_load_ledger");
+      }
     } finally {
       setLoading(false);
     }
@@ -493,6 +520,34 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
   useEffect(() => {
     refresh();
   }, [props.bankId]);
+
+  useEffect(() => {
+    if (!backfillStatus || backfillStatus.status !== "running") return;
+
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api.getBackfillStatus(props.bankId);
+        if (cancelled) return;
+        setBackfillStatus(st);
+
+        if (st.status !== "running") {
+          window.clearInterval(id);
+          if (st.status === "done" || st.status === "idle") {
+            refresh();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [backfillStatus?.status, props.bankId, start, end]);
+
 
   return (
     <div className="space-y-5">
@@ -509,6 +564,25 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
           {loading ? "Loading..." : "Refresh"}
         </Button>
       </div>
+
+      {backfillStatus && backfillStatus.status === "running" ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Backfilling KIBOR rates…</div>
+              <div className="mt-1 text-xs text-slate-600">
+                This can take 1–2 minutes for older backdated debits. You can keep using the app while it runs.
+              </div>
+              <div className="mt-2 text-xs tabular-nums text-slate-600">
+                {backfillStatus.processed_days} / {backfillStatus.total_days} business days
+              </div>
+            </div>
+            <div className="w-56">
+              <Progress value={backfillPct} />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Ledger rows</div>
@@ -566,6 +640,13 @@ function Transactions(props: {
   const [end, setEnd] = useState(defaultEnd);
   const [rows, setRows] = useState<api.TxOut[]>([]);
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   const [date, setDate] = useState(defaultEnd);
   const [category, setCategory] = useState<"principal" | "markup">("principal");
@@ -591,6 +672,34 @@ function Transactions(props: {
   useEffect(() => {
     refresh();
   }, [props.bankId]);
+
+  useEffect(() => {
+    if (!backfillStatus || backfillStatus.status !== "running") return;
+
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api.getBackfillStatus(props.bankId);
+        if (cancelled) return;
+        setBackfillStatus(st);
+
+        if (st.status !== "running") {
+          window.clearInterval(id);
+          if (st.status === "done" || st.status === "idle") {
+            refresh();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [backfillStatus?.status, props.bankId, start, end]);
+
 
   return (
     <div className="space-y-5">
@@ -753,6 +862,13 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
   const [start, setStart] = useState(defaultStart);
   const [end, setEnd] = useState(defaultEnd);
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   return (
     <div className="space-y-5">
@@ -801,6 +917,13 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
   const isAdmin = props.role === "admin";
   const [rows, setRows] = useState<api.UserOut[]>([]);
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -945,6 +1068,13 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
 
   const [rows, setRows] = useState<api.AuditOut[]>([]);
   const [loading, setLoading] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  const backfillPct =
+    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
+      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
+      : 0;
+
 
   const [username, setUsername] = useState("");
   const [entityType, setEntityType] = useState("");

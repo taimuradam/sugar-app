@@ -36,6 +36,24 @@ export type TxOut = {
   created_at?: string;
 };
 
+export type BackfillStatus = {
+  status: "idle" | "running" | "done" | "error";
+  total_days: number;
+  processed_days: number;
+  started_at?: string | null;
+  updated_at?: string | null;
+  message?: string | null;
+};
+
+export class BackfillRunningError extends Error {
+  status: BackfillStatus;
+  constructor(status: BackfillStatus) {
+    super("backfill_running");
+    this.name = "BackfillRunningError";
+    this.status = status;
+  }
+}
+
 export type LedgerRow = {
   date: string;
   principal_balance: number;
@@ -145,9 +163,38 @@ export async function deleteTx(bankId: number, txId: number) {
   });
 }
 
+export async function getBackfillStatus(bankId: number) {
+  return await request<BackfillStatus>(`/banks/${bankId}/kibor-backfill/status`);
+}
+
+export async function startBackfill(bankId: number) {
+  return await request<BackfillStatus>(`/banks/${bankId}/kibor-backfill/start`, { method: "POST" });
+}
+
 export async function ledger(bankId: number, start: string, end: string) {
   const qs = new URLSearchParams({ start, end });
-  return await request<LedgerRow[]>(`/banks/${bankId}/ledger?${qs.toString()}`);
+  const token = getToken();
+  const headers: any = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}/banks/${bankId}/ledger?${qs.toString()}`, { headers });
+
+  const text = await res.text();
+  if (res.status === 202) {
+    const st = text ? (JSON.parse(text) as BackfillStatus) : { status: "running", total_days: 0, processed_days: 0 };
+    throw new BackfillRunningError(st);
+  }
+
+  if (!res.ok) {
+    try {
+      const j = JSON.parse(text);
+      throw new Error(j?.detail || "failed_to_load_ledger");
+    } catch {
+      throw new Error(text || "failed_to_load_ledger");
+    }
+  }
+
+  return text ? (JSON.parse(text) as LedgerRow[]) : ([] as LedgerRow[]);
 }
 
 /** App.tsx uses this name */

@@ -11,7 +11,7 @@ from app.services.bank_settings import get_settings_for_year
 from app.models.bank import Bank
 from app.models.rate import Rate
 from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
-from app.services.kibor_sync import maybe_refresh_kibor_rates
+from app.services.kibor_backfill import ensure_started
 
 router = APIRouter(prefix="/banks/{bank_id}/transactions", tags=["transactions"])
 
@@ -99,9 +99,8 @@ def add_tx(bank_id: int, body: TxCreate, s: Session = Depends(db), u=Depends(req
                 st.kibor_placeholder_rate_percent = base_for_tenor
                 s.add(st)
                 s.commit()
-
         if bank is not None and not _is_islamic(bank.bank_type):
-            maybe_refresh_kibor_rates(s)
+            ensure_started(bank_id)
 
     log_event(
         s,
