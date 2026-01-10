@@ -28,6 +28,18 @@ function fmtRate(n: number | null | undefined) {
   }).format(n);
 }
 
+function BankTypeBadge({ bankType }: { bankType: string | undefined | null }) {
+  const t = (bankType || "").trim().toLowerCase();
+  const label = t === "islamic" ? "Islamic" : "Conventional";
+
+  const cls =
+    t === "islamic"
+      ? "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"
+      : "inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700";
+
+  return <span className={cls}>{label}</span>;
+}
+
 export default function App() {
   const [role, setRole] = useState(() => api.getRole());
   const [error, setError] = useState<string>("");
@@ -221,12 +233,18 @@ export default function App() {
                   <div className="text-sm text-slate-600">No bank selected.</div>
                 ) : (
                   <div className="space-y-3 text-sm">
-                    <div className="flex flex-col gap-1">
-                      <div className="text-lg font-semibold text-slate-900">
-                        {selectedBank.name}
-                      </div>
-                      <div className="text-sm text-slate-600 capitalize">
-                        {selectedBank.bank_type}
+                    {/* Bank name + badge + loan count */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-lg font-semibold text-slate-900">
+                          {selectedBank.name}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <BankTypeBadge bankType={selectedBank.bank_type} />
+                          <span className="text-xs text-slate-500">
+                            {(loans?.length ?? 0)} loan{(loans?.length ?? 0) === 1 ? "" : "s"}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
