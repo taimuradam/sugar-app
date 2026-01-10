@@ -13,7 +13,7 @@ import {
 import * as api from "./api";
 import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast, Progress } from "./ui";
 
-type Tab = "ledger" | "transactions" | "report" | "users" | "audit";
+type Tab = "ledger" | "transactions" | "loans" | "report" | "users" | "audit";
 
 function fmtMoney(n: number) {
   if (Number.isNaN(n)) return "-";
@@ -29,9 +29,14 @@ export default function App() {
 
   const [banks, setBanks] = useState<api.BankOut[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
+  const [loans, setLoans] = useState<api.LoanOut[]>([]);
+  const [selectedLoanId, setSelectedLoanId] = useState<number>(0);
+  const [loadingLoans, setLoadingLoans] = useState(false);
   const [loadingBanks, setLoadingBanks] = useState(false);
 
   const isAdmin = role === "admin";
+
+  const toast = useToast();
 
   async function refreshBanks(pickFirst = false) {
     setLoadingBanks(true);
@@ -47,6 +52,31 @@ export default function App() {
     }
   }
 
+  async function refreshLoans(bankId: number, pickFirst = false) {
+    if (!bankId) {
+      setLoans([]);
+      setSelectedLoanId(0);
+      return;
+    }
+    setLoadingLoans(true);
+    try {
+      const list = (await api.listLoans(bankId)) as api.LoanOut[];
+      setLoans(list);
+
+      if (pickFirst) {
+        setSelectedLoanId(list.length ? list[0].id : 0);
+      } else if (selectedLoanId && !list.some((l) => l.id === selectedLoanId)) {
+        setSelectedLoanId(list.length ? list[0].id : 0);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to load loans");
+      setLoans([]);
+      setSelectedLoanId(0);
+    } finally {
+      setLoadingLoans(false);
+    }
+  }
+
   useEffect(() => {
     if (!tokenReady) return;
     refreshBanks(true);
@@ -57,7 +87,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenReady]);
 
+  useEffect(() => {
+    if (!tokenReady) return;
+    refreshLoans(selectedBankId, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenReady, selectedBankId]);
+
   const selectedBank = useMemo(() => banks.find((b) => b.id === selectedBankId) || null, [banks, selectedBankId]);
+  const selectedLoan = useMemo(() => loans.find((l) => l.id === selectedLoanId) || null, [loans, selectedLoanId]);
 
   if (!tokenReady) {
     return (
@@ -121,6 +158,23 @@ export default function App() {
               </Select>
             </div>
 
+            <div className="w-[320px]">
+              <Label>Loan</Label>
+              <Select
+                value={selectedLoanId ? String(selectedLoanId) : ""}
+                onChange={(e) => setSelectedLoanId(Number(e.target.value))}
+                disabled={loadingLoans || !loans.length || !selectedBankId}
+              >
+                {!selectedBankId ? <option value="">Select a bank first</option> : null}
+                {selectedBankId && !loans.length ? <option value="">No loans</option> : null}
+                {loans.map((l) => (
+                  <option key={l.id} value={String(l.id)}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
             <Button
               kind="secondary"
               onClick={() => {
@@ -141,6 +195,7 @@ export default function App() {
           <div className="space-y-3">
             <NavButton active={tab === "ledger"} onClick={() => setTab("ledger")} icon={<LineChart className="h-4 w-4" />} text="Ledger" />
             <NavButton active={tab === "transactions"} onClick={() => setTab("transactions")} icon={<Receipt className="h-4 w-4" />} text="Transactions" />
+            <NavButton active={tab === "loans"} onClick={() => setTab("loans")} icon={<ClipboardList className="h-4 w-4" />} text="Loans" />
             <NavButton active={tab === "report"} onClick={() => setTab("report")} icon={<Download className="h-4 w-4" />} text="Export report" />
             {isAdmin ? <NavButton active={tab === "users"} onClick={() => setTab("users")} icon={<Users className="h-4 w-4" />} text="Users" /> : null}
             {isAdmin ? (
@@ -164,96 +219,61 @@ export default function App() {
                       <div className="font-mono">{selectedBank.bank_type}</div>
                     </div>
 
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">KIBOR tenor</div>
-                      <div className="font-mono">{selectedBank.kibor_tenor_months}m</div>
-                    </div>
-
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">KIBOR rate %</div>
-                      <div className="font-mono">
-                        {selectedBank.current_kibor_rate_percent == null ? "—" : selectedBank.current_kibor_rate_percent}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">Additional rate</div>
-                      <div className="font-mono">{selectedBank.additional_rate ?? 0}</div>
-                    </div>
-
                     <div className="mt-3 pt-3 border-t border-slate-100">
                       <div className="mb-2 flex items-center gap-2">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Loan</div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected loan</div>
                         <div className="h-px flex-1 bg-slate-100" />
                       </div>
 
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <div className="text-slate-600">Max loan</div>
-                          <div className="font-mono">
-                            {selectedBank.max_loan_amount == null ? "-" : fmtMoney(selectedBank.max_loan_amount)}
+                      {!selectedLoan ? (
+                        <div className="text-sm text-slate-600">No loan selected.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <div className="text-slate-600">Name</div>
+                            <div className="font-mono">{selectedLoan.name}</div>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <div className="text-slate-600">KIBOR tenor</div>
+                            <div className="font-mono">{selectedLoan.kibor_tenor_months}m</div>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <div className="text-slate-600">Additional rate</div>
+                            <div className="font-mono">{selectedLoan.additional_rate ?? 0}</div>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <div className="text-slate-600">Max loan</div>
+                            <div className="font-mono">
+                              {selectedLoan.max_loan_amount == null ? "—" : fmtMoney(selectedLoan.max_loan_amount)}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <div className="text-slate-600">Placeholder KIBOR %</div>
+                            <div className="font-mono">{selectedLoan.kibor_placeholder_rate_percent ?? 0}</div>
                           </div>
                         </div>
-
-                        {selectedBank.max_loan_amount != null ? (
-                          <>
-                            <div className="flex justify-between">
-                              <div className="text-slate-600">Used</div>
-                              <div className="font-mono">{fmtMoney(Math.max(0, selectedBank.principal_balance ?? 0))}</div>
-                            </div>
-
-                            <div className="flex justify-between">
-                              <div className="text-slate-600">Remaining</div>
-                              <div className="font-mono">
-                                {fmtMoney(
-                                  selectedBank.remaining_loan_amount ??
-                                    Math.max(0, selectedBank.max_loan_amount - Math.max(0, selectedBank.principal_balance ?? 0))
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="pt-1">
-                              <div className="flex items-center justify-between text-xs text-slate-600">
-                                <div>Utilization</div>
-                                <div className="font-mono">
-                                  {Math.min(
-                                    100,
-                                    Math.max(
-                                      0,
-                                      selectedBank.loan_utilization_percent ??
-                                        ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
-                                    )
-                                  ).toFixed(1)}
-                                  %
-                                </div>
-                              </div>
-
-                              <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
-                                <div
-                                  className="h-2 rounded-full bg-slate-900"
-                                  style={{
-                                    width: `${Math.min(
-                                      100,
-                                      Math.max(
-                                        0,
-                                        selectedBank.loan_utilization_percent ??
-                                          ((Math.max(0, selectedBank.principal_balance ?? 0) / (selectedBank.max_loan_amount || 1)) * 100)
-                                      )
-                                    )}%`,
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
+                      )}
                     </div>
                   </div>
                 )}
               </CardBody>
             </Card>
 
-            {isAdmin ? <CreateBankCard onCreated={() => refreshBanks(true)} onError={setError} /> : null}
+              {isAdmin ? (
+                <CreateBankCard
+                  onCreated={async (b) => {
+                    setSelectedBankId(b.id);
+                    setTab("loans");
+                    await refreshBanks(false);
+                    await refreshLoans(b.id, true);
+                  }}
+                  onError={setError}
+                />
+              ) : null}
           </div>
 
           <div>
@@ -272,16 +292,40 @@ export default function App() {
                 <CardBody />
               </Card>
             ) : tab === "ledger" ? (
-              <Ledger bankId={selectedBankId} onError={setError} />
+              !selectedLoanId ? (
+                <Card>
+                  <CardHeader title="Select a loan" subtitle="Ledger is calculated per-loan." />
+                  <CardBody />
+                </Card>
+              ) : (
+                <Ledger bankId={selectedBankId} loanId={selectedLoanId} onError={setError} />
+              )
             ) : tab === "transactions" ? (
-              <Transactions
-                bankId={selectedBankId}
-                role={role}
-                onError={setError}
-                onTransactionsChanged={() => refreshBanks(false)}
-              />
+              !selectedLoanId ? (
+                <Card>
+                  <CardHeader title="Select a loan" subtitle="Transactions are recorded per-loan." />
+                  <CardBody />
+                </Card>
+              ) : (
+                <Transactions
+                  bankId={selectedBankId}
+                  loanId={selectedLoanId}
+                  role={role}
+                  onError={setError}
+                  onTransactionsChanged={() => refreshBanks(false)}
+                />
+              )
+            ) : tab === "loans" ? (
+              <LoansTab bankId={selectedBankId} role={role} onError={setError} onLoansChanged={() => refreshLoans(selectedBankId, true)} />
             ) : tab === "report" ? (
-              <Report bankId={selectedBankId} onError={setError} />
+              !selectedLoanId ? (
+                <Card>
+                  <CardHeader title="Select a loan" subtitle="Exports are generated per-loan." />
+                  <CardBody />
+                </Card>
+              ) : (
+                <Report bankId={selectedBankId} loanId={selectedLoanId} onError={setError} />
+              )
             ) : tab === "users" ? (
               <UsersTab role={role} onError={setError} />
             ) : (
@@ -358,117 +402,48 @@ function LoginCard(props: { error: string; onError: (e: string) => void; onLogin
   );
 }
 
-function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => void }) {
+function CreateBankCard(props: { onCreated: (b: api.BankOut) => void; onError: (e: string) => void }) {
   const [name, setName] = useState("");
   const [bankType, setBankType] = useState("conventional");
-  const [additionalRate, setAdditionalRate] = useState<string>("0");
-
-  const [kiborTenor, setKiborTenor] = useState<"1" | "3" | "6">("1");
-  const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
-
   const [loading, setLoading] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
-
   const toast = useToast();
+
+  async function create() {
+    setLoading(true);
+    try {
+      const b = await api.createBank({ name, bank_type: bankType });
+      setName("");
+      setBankType("conventional");
+      props.onCreated(b);
+      toast.success("Bank created");
+    } catch (e: any) {
+      props.onError(e?.message || "Failed to create bank");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <Card>
-      <CardHeader title="Create bank" subtitle="You need at least one bank to test the app." />
+      <CardHeader title="Create bank" subtitle="Banks only hold identity (name + type). Add one or more loans under the Loans tab." />
       <CardBody>
-        <div className="space-y-3">
-          <div>
-            <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Bank Alfalah" />
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1">
+            <Label>Bank name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., HBL" />
           </div>
 
-          <div>
+          <div className="space-y-1">
             <Label>Type</Label>
             <Select value={bankType} onChange={(e) => setBankType(e.target.value)}>
-              <option value="conventional">conventional</option>
-              <option value="islamic">islamic</option>
+              <option value="conventional">Conventional</option>
+              <option value="islamic">Islamic</option>
             </Select>
           </div>
+        </div>
 
-          <div>
-            <Label>KIBOR base tenor</Label>
-            <Select value={kiborTenor} onChange={(e) => setKiborTenor(e.target.value as any)}>
-              <option value="1">1 month</option>
-              <option value="3">3 months</option>
-              <option value="6">6 months</option>
-            </Select>
-          </div>
-
-          <div>
-            <Label>KIBOR rate % (auto-filled)</Label>
-            <Input value="Auto" readOnly disabled />
-            <div className="mt-1 text-xs text-slate-500">Pulled from SBP KIBOR PDF at the bank creation date.</div>
-          </div>
-
-          <div>
-            <Label>Additional rate (optional)</Label>
-            <Input value={additionalRate} onChange={(e) => setAdditionalRate(e.target.value)} inputMode="decimal" placeholder="0" />
-          </div>
-
-          <div>
-            <Label>Maximum loan amount (optional)</Label>
-            <Input
-              value={maxLoanAmount}
-              onChange={(e) => setMaxLoanAmount(e.target.value)}
-              inputMode="decimal"
-              placeholder="e.g., 50000000"
-            />
-          </div>
-
-          <Button
-            onClick={async () => {
-              props.onError("");
-              const nm = name.trim();
-              if (!nm) {
-                props.onError("bank_name_required");
-                return;
-              }
-              const add = additionalRate.trim() ? Number(additionalRate) : 0;
-              if (!Number.isFinite(add)) {
-                props.onError("additional_rate_invalid");
-                return;
-              }
-
-              setLoading(true);
-              try {
-                const mx = maxLoanAmount.trim() ? Number(maxLoanAmount) : null;
-                if (maxLoanAmount.trim() && !Number.isFinite(mx as any)) {
-                  props.onError("max_loan_invalid");
-                  return;
-                }
-
-                await api.createBank({
-                  name: nm,
-                  bank_type: bankType,
-                  kibor_tenor_months: Number(kiborTenor) as 1 | 3 | 6,
-                  additional_rate: add,
-                  kibor_placeholder_rate_percent: 0,
-                  max_loan_amount: mx,
-                });
-
-                toast.success("Bank created.");
-                setName("");
-                setAdditionalRate("0");
-                setKiborTenor("1");
-                setMaxLoanAmount("");
-                props.onCreated();
-              } catch (e: any) {
-                props.onError(e?.message || "failed_to_create_bank");
-              } finally {
-                setLoading(false);
-              }
-            }}
-            disabled={loading}
-          >
+        <div className="mt-4 flex justify-end">
+          <Button onClick={create} disabled={loading || !name.trim()}>
             <Plus className="h-4 w-4" />
             {loading ? "Creating..." : "Create"}
           </Button>
@@ -478,7 +453,7 @@ function CreateBankCard(props: { onCreated: () => void; onError: (e: string) => 
   );
 }
 
-function Ledger(props: { bankId: number; onError: (e: string) => void }) {
+function Ledger(props: { bankId: number; loanId: number; onError: (e: string) => void }) {
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -503,7 +478,7 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
     setLoading(true);
     try {
       setBackfillStatus(null);
-      const out = await api.ledger(props.bankId, start, end);
+      const out = await api.ledger(props.bankId, props.loanId, start, end);
       setRows(out);
     } catch (e: any) {
       if (e?.name === "BackfillRunningError") {
@@ -517,9 +492,14 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
     }
   }
 
-  useEffect(() => {
-    refresh();
-  }, [props.bankId]);
+    useEffect(() => {
+      if (!props.loanId) {
+        setRows([]);
+        setBackfillStatus(null);
+        return;
+      }
+      refresh();
+    }, [props.loanId]);
 
   useEffect(() => {
     if (!backfillStatus || backfillStatus.status !== "running") return;
@@ -527,7 +507,7 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
     let cancelled = false;
     const id = window.setInterval(async () => {
       try {
-        const st = await api.getBackfillStatus(props.bankId);
+        const st = await api.getBackfillStatus(props.bankId, props.loanId);
         if (cancelled) return;
         setBackfillStatus(st);
 
@@ -546,7 +526,7 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [backfillStatus?.status, props.bankId, start, end]);
+  }, [backfillStatus?.status, props.loanId, start, end]);
 
 
   return (
@@ -623,6 +603,7 @@ function Ledger(props: { bankId: number; onError: (e: string) => void }) {
 
 function Transactions(props: {
   bankId: number;
+  loanId: number;
   role: string;
   onError: (e: string) => void;
   onTransactionsChanged?: () => void;
@@ -660,7 +641,7 @@ function Transactions(props: {
     props.onError("");
     setLoading(true);
     try {
-      const out = await api.listTxs(props.bankId, start, end);
+      const out = await api.listTxs(props.bankId, props.loanId, start, end);
       setRows(out);
     } catch (e: any) {
       props.onError(e?.message || "failed_to_load_transactions");
@@ -671,7 +652,7 @@ function Transactions(props: {
 
   useEffect(() => {
     refresh();
-  }, [props.bankId]);
+  }, [props.bankId, props.loanId]);
 
   useEffect(() => {
     if (!backfillStatus || backfillStatus.status !== "running") return;
@@ -679,7 +660,7 @@ function Transactions(props: {
     let cancelled = false;
     const id = window.setInterval(async () => {
       try {
-        const st = await api.getBackfillStatus(props.bankId);
+        const st = await api.getBackfillStatus(props.bankId, props.loanId);
         if (cancelled) return;
         setBackfillStatus(st);
 
@@ -698,7 +679,7 @@ function Transactions(props: {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [backfillStatus?.status, props.bankId, start, end]);
+  }, [backfillStatus?.status, props.bankId, props.loanId, start, end]);
 
 
   return (
@@ -756,7 +737,7 @@ function Transactions(props: {
                 const parsed = Number(amount);
                 if (!Number.isFinite(parsed) || Math.abs(parsed) < 1e-12) throw new Error("amount_invalid");
                 const signed = direction === "credit" ? -Math.abs(parsed) : Math.abs(parsed);
-                await api.addTx(props.bankId, { date, category, amount: signed, note: note.trim() ? note.trim() : null });
+                await api.addTx(props.bankId, props.loanId, { date, category, amount: signed, note: note.trim() ? note.trim() : null });
                 toast.success("Transaction added.");
                 setAmount("");
                 setNote("");
@@ -825,7 +806,7 @@ function Transactions(props: {
                             if (!ok) return;
 
                             try {
-                              await api.deleteTx(props.bankId, t.id);
+                              await api.deleteTx(props.bankId, props.loanId, t.id);
                               toast.success("Transaction deleted.");
                               await refresh();
                               props.onTransactionsChanged?.();
@@ -851,7 +832,196 @@ function Transactions(props: {
   );
 }
 
-function Report(props: { bankId: number; onError: (e: string) => void }) {
+function LoansTab(props: { bankId: number; role: string; onError: (e: string) => void; onLoansChanged: () => void }) {
+  const isAdmin = props.role === "admin";
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  const [name, setName] = useState("");
+  const [tenor, setTenor] = useState<"1" | "3" | "6">("1");
+  const [additionalRate, setAdditionalRate] = useState<string>("0");
+  const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
+  const [placeholderRate, setPlaceholderRate] = useState<string>("0");
+
+  const [items, setItems] = useState<api.LoanOut[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  async function refresh() {
+    if (!props.bankId) return;
+    setLoading(true);
+    try {
+      const list = await api.listLoans(props.bankId);
+      setItems(list);
+    } catch (e: any) {
+      props.onError(e?.message || "Failed to load loans");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!props.bankId) return;
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.bankId]);
+
+  async function create() {
+    try {
+      await api.createLoan(props.bankId, {
+        name,
+        kibor_tenor_months: Number(tenor) as 1 | 3 | 6,
+        additional_rate: additionalRate.trim() ? Number(additionalRate) : 0,
+        kibor_placeholder_rate_percent: placeholderRate.trim() ? Number(placeholderRate) : 0,
+        max_loan_amount: maxLoanAmount.trim() ? Number(maxLoanAmount) : null,
+      });
+      setName("");
+      setTenor("1");
+      setAdditionalRate("0");
+      setMaxLoanAmount("");
+      setPlaceholderRate("0");
+      toast.success("Loan created");
+      await refresh();
+      props.onLoansChanged();
+    } catch (e: any) {
+      props.onError(e?.message || "Failed to create loan");
+    }
+  }
+
+  async function remove(loan: api.LoanOut) {
+    const ok = await confirm({
+      title: "Delete loan?",
+      body: `This will remove the loan "${loan.name}".`,
+      confirmText: "Delete",
+      danger: true,
+    });
+
+    if (!ok) return;
+
+    try {
+      await api.deleteLoan(props.bankId, loan.id);
+      toast.success("Loan deleted");
+      await refresh();
+      props.onLoansChanged();
+    } catch (e: any) {
+      props.onError(e?.message || "Failed to delete loan");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader title="Loans" subtitle="Each bank can have multiple loans. Tenor / limits / additional rate live on the loan." />
+        <CardBody>
+          {!props.bankId ? (
+            <div className="text-sm text-slate-600">Select a bank first.</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <Button kind="secondary" onClick={refresh} disabled={loading}>
+                  {loading ? "Loading..." : "Refresh"}
+                </Button>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Name</Th>
+                      <Th>Tenor</Th>
+                      <Th>Additional %</Th>
+                      <Th>Max loan</Th>
+                      <Th>Placeholder %</Th>
+                      {isAdmin ? <Th /> : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((l) => (
+                      <tr key={l.id}>
+                        <Td className="font-medium">{l.name}</Td>
+                        <Td>{l.kibor_tenor_months}m</Td>
+                        <Td>{l.additional_rate ?? 0}</Td>
+                        <Td>{l.max_loan_amount ?? "—"}</Td>
+                        <Td>{l.kibor_placeholder_rate_percent ?? 0}</Td>
+                        {isAdmin ? (
+                          <Td className="text-right">
+                            <Button kind="danger" onClick={() => remove(l)}>
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </Button>
+                          </Td>
+                        ) : null}
+                      </tr>
+                    ))}
+                    {!items.length ? (
+                      <tr>
+                        <Td colSpan={isAdmin ? 6 : 5} className="text-slate-600">
+                          No loans yet.
+                        </Td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </Table>
+              </div>
+            </>
+          )}
+        </CardBody>
+      </Card>
+
+      {isAdmin ? (
+        <Card>
+          <CardHeader title="Add a loan" subtitle="Create a loan for the selected bank." />
+          <CardBody>
+            {!props.bankId ? (
+              <div className="text-sm text-slate-600">Select a bank first.</div>
+            ) : (
+              <>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label>Loan name</Label>
+                    <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Working Capital 2026" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Tenor</Label>
+                    <Select value={tenor} onChange={(e) => setTenor(e.target.value as any)}>
+                      <option value="1">1 month</option>
+                      <option value="3">3 months</option>
+                      <option value="6">6 months</option>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Additional rate %</Label>
+                    <Input value={additionalRate} onChange={(e) => setAdditionalRate(e.target.value)} inputMode="decimal" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Max loan amount</Label>
+                    <Input value={maxLoanAmount} onChange={(e) => setMaxLoanAmount(e.target.value)} inputMode="decimal" placeholder="Optional" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>KIBOR placeholder rate %</Label>
+                    <Input value={placeholderRate} onChange={(e) => setPlaceholderRate(e.target.value)} inputMode="decimal" />
+                  </div>
+                </div>
+
+                <div className="mt-4 flex justify-end">
+                  <Button onClick={create} disabled={!name.trim()}>
+                    <Plus className="h-4 w-4" />
+                    Create loan
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardBody>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
+function Report(props: { bankId: number; loanId: number; onError: (e: string) => void }) {
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -869,6 +1039,29 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
       ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
       : 0;
 
+        useEffect(() => {
+          if (!backfillStatus || backfillStatus.status !== "running") return;
+
+          let cancelled = false;
+          const id = window.setInterval(async () => {
+            try {
+              const st = await api.getBackfillStatus(props.bankId, props.loanId);
+              if (cancelled) return;
+              setBackfillStatus(st);
+
+              if (st.status !== "running") {
+                window.clearInterval(id);
+              }
+            } catch {
+              // ignore
+            }
+          }, 1000);
+
+          return () => {
+            cancelled = true;
+            window.clearInterval(id);
+          };
+        }, [backfillStatus, props.bankId, props.loanId]);
 
   return (
     <div className="space-y-5">
@@ -889,9 +1082,14 @@ function Report(props: { bankId: number; onError: (e: string) => void }) {
                 props.onError("");
                 setLoading(true);
                 try {
-                  await api.downloadReport(props.bankId, start, end);
+                  setBackfillStatus(null);
+                  await api.downloadReport(props.bankId, props.loanId, start, end);
                 } catch (e: any) {
-                  props.onError(e?.message || "failed_to_download_report");
+                  if (e?.name === "BackfillRunningError") {
+                    setBackfillStatus(e.status);
+                  } else {
+                    props.onError(e?.message || "failed_to_download_report");
+                  }
                 } finally {
                   setLoading(false);
                 }

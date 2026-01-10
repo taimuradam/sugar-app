@@ -34,6 +34,7 @@ class TxCreate(BaseModel):
 class TxOut(BaseModel):
     id: int
     bank_id: int
+    loan_id: int | None = None
     date: date
     category: TxCategory
     amount: float

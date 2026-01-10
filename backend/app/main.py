@@ -12,6 +12,7 @@ from app.api.routes.users import router as users_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.backfill import router as backfill_router
 from app.services.kibor_sync import kibor_sync_loop
+from app.api.routes.loans import router as loans_router
 
 app = FastAPI(title="Finance API")
 
@@ -32,7 +33,7 @@ app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(audit_router)
 app.include_router(backfill_router)
-
+app.include_router(loans_router)
 
 @app.on_event("startup")
 async def _start_kibor_sync():
