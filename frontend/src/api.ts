@@ -29,6 +29,7 @@ export type TxOut = {
   date: string;
   category: TxCategory;
   amount: number;
+  kibor_rate_percent?: number | null;
   note?: string | null;
   created_at: string;
 };

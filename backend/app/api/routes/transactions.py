@@ -26,6 +26,82 @@ def _require_bank_loan(s: Session, bank_id: int, loan_id: int) -> tuple[Bank, Lo
         raise HTTPException(status_code=404, detail="loan_not_found")
     return b, ln
 
+def _attach_kibor_rates(
+    s: Session,
+    bank: Bank,
+    loan: Loan,
+    txs: list[Transaction],
+) -> list[TxOut]:
+    if not txs:
+        return []
+
+    tenor = int(loan.kibor_tenor_months)
+
+    # Islamic banks: fixed at the first stored rate for this bank+tenor.
+    if (bank.bank_type or "").strip().lower() == "islamic":
+        fixed = (
+            s.execute(
+                select(Rate.annual_rate_percent)
+                .where(Rate.bank_id == bank.id, Rate.tenor_months == tenor)
+                .order_by(Rate.effective_date.asc())
+                .limit(1)
+            )
+            .scalar_one_or_none()
+        )
+        fixed_f = float(fixed) if fixed is not None else None
+        if fixed_f is None and loan.kibor_placeholder_rate_percent is not None:
+            ph = float(loan.kibor_placeholder_rate_percent)
+            fixed_f = ph if ph > 0 else None
+
+        return [
+            TxOut(
+                id=t.id,
+                bank_id=t.bank_id,
+                loan_id=t.loan_id,
+                date=t.date,
+                category=t.category,
+                amount=float(t.amount),
+                kibor_rate_percent=fixed_f,
+                note=t.note,
+                created_at=t.created_at,
+            )
+            for t in txs
+        ]
+
+    # Conventional banks: rate is determined by the KIBOR table for the tx's business day.
+    eff_dates = sorted({adjust_to_last_business_day(t.date) for t in txs})
+    rate_rows = s.execute(
+        select(Rate.effective_date, Rate.annual_rate_percent).where(
+            Rate.bank_id == bank.id,
+            Rate.tenor_months == tenor,
+            Rate.effective_date.in_(eff_dates),
+        )
+    ).all()
+    rate_map: dict[date, float] = {d: float(r) for (d, r) in rate_rows}
+
+    ph_f: float | None = None
+    if loan.kibor_placeholder_rate_percent is not None:
+        ph = float(loan.kibor_placeholder_rate_percent)
+        ph_f = ph if ph > 0 else None
+
+    out: list[TxOut] = []
+    for t in txs:
+        eff = adjust_to_last_business_day(t.date)
+        rp = rate_map.get(eff, ph_f)
+        out.append(
+            TxOut(
+                id=t.id,
+                bank_id=t.bank_id,
+                loan_id=t.loan_id,
+                date=t.date,
+                category=t.category,
+                amount=float(t.amount),
+                kibor_rate_percent=rp,
+                note=t.note,
+                created_at=t.created_at,
+            )
+        )
+    return out
 
 @router.get("", response_model=list[TxOut])
 def list_transactions(
@@ -36,14 +112,15 @@ def list_transactions(
     s: Session = Depends(db),
     u=Depends(current_user),
 ):
-    _require_bank_loan(s, bank_id, loan_id)
+    bank, loan = _require_bank_loan(s, bank_id, loan_id)
     q = select(Transaction).where(Transaction.bank_id == bank_id, Transaction.loan_id == loan_id)
     if start is not None:
         q = q.where(Transaction.date >= start)
     if end is not None:
         q = q.where(Transaction.date <= end)
     q = q.order_by(Transaction.date.desc(), Transaction.id.desc())
-    return s.execute(q).scalars().all()
+    txs = s.execute(q).scalars().all()
+    return _attach_kibor_rates(s, bank, loan, txs)
 
 
 @router.post("", response_model=TxOut)
@@ -116,7 +193,7 @@ def add_tx(bank_id: int, loan_id: int, body: TxCreate, s: Session = Depends(db),
         details={"bank_id": bank_id, "loan_id": loan_id, "date": str(t.date), "category": t.category, "amount": str(t.amount), "note": t.note},
     )
 
-    return t
+    return _attach_kibor_rates(s, bank, loan, [t])[0]
 
 
 @router.delete("/{tx_id}")

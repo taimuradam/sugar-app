@@ -20,6 +20,14 @@ function fmtMoney(n: number) {
   return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
+function fmtRate(n: number | null | undefined) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "-";
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
 export default function App() {
   const [role, setRole] = useState(() => api.getRole());
   const [error, setError] = useState<string>("");
@@ -760,6 +768,7 @@ function Transactions(props: {
           <thead>
             <tr>
               <Th>Date</Th>
+              <Th>KIBOR %</Th>
               <Th>Category</Th>
               <Th>Direction</Th>
               <Th>Amount</Th>
@@ -770,7 +779,7 @@ function Transactions(props: {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <Td colSpan={isAdmin ? 6 : 5} className="text-slate-600">
+                <Td colSpan={isAdmin ? 7 : 6} className="text-slate-600">
                   No transactions in range.
                 </Td>
               </tr>
@@ -781,6 +790,7 @@ function Transactions(props: {
                 return (
                   <tr key={t.id}>
                     <Td>{t.date}</Td>
+                    <Td className="font-mono">{fmtRate(t.kibor_rate_percent)}</Td>
                     <Td className="font-mono">{t.category}</Td>
                     <Td className="font-mono">{dir}</Td>
                     <Td className="font-mono">{fmtMoney(abs)}</Td>

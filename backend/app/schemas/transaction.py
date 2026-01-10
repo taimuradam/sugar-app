@@ -38,6 +38,7 @@ class TxOut(BaseModel):
     date: date
     category: TxCategory
     amount: float
+    kibor_rate_percent: float | None = None
     note: str | None
     created_at: datetime
 
