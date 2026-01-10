@@ -216,15 +216,18 @@ export default function App() {
             ) : null}
 
             <Card>
-              <CardHeader title="Bank details" />
               <CardBody>
                 {!selectedBank ? (
                   <div className="text-sm text-slate-600">No bank selected.</div>
                 ) : (
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <div className="text-slate-600">Type</div>
-                      <div className="font-mono">{selectedBank.bank_type}</div>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex flex-col gap-1">
+                      <div className="text-lg font-semibold text-slate-900">
+                        {selectedBank.name}
+                      </div>
+                      <div className="text-sm text-slate-600 capitalize">
+                        {selectedBank.bank_type}
+                      </div>
                     </div>
 
                     <div className="mt-3 pt-3 border-t border-slate-100">
@@ -428,7 +431,7 @@ function CreateBankCard(props: { onCreated: (b: api.BankOut) => void; onError: (
 
   return (
     <Card>
-      <CardHeader title="Create bank" subtitle="Banks only hold identity (name + type). Add one or more loans under the Loans tab." />
+      <CardHeader title="Create bank" subtitle="Add one or more loans under the Loans tab." />
       <CardBody>
         <div className="grid gap-3">
           <div className="space-y-1">
