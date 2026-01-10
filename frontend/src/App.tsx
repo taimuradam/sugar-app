@@ -240,7 +240,7 @@ export default function App() {
                           </div>
 
                           <div className="flex justify-between">
-                            <div className="text-slate-600">Additional rate</div>
+                            <div className="text-slate-600">Additional spread</div>
                             <div className="font-mono">{selectedLoan.additional_rate ?? 0}</div>
                           </div>
 
@@ -249,11 +249,6 @@ export default function App() {
                             <div className="font-mono">
                               {selectedLoan.max_loan_amount == null ? "—" : fmtMoney(selectedLoan.max_loan_amount)}
                             </div>
-                          </div>
-
-                          <div className="flex justify-between">
-                            <div className="text-slate-600">Placeholder KIBOR %</div>
-                            <div className="font-mono">{selectedLoan.kibor_placeholder_rate_percent ?? 0}</div>
                           </div>
                         </div>
                       )}
@@ -427,7 +422,7 @@ function CreateBankCard(props: { onCreated: (b: api.BankOut) => void; onError: (
     <Card>
       <CardHeader title="Create bank" subtitle="Banks only hold identity (name + type). Add one or more loans under the Loans tab." />
       <CardBody>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3">
           <div className="space-y-1">
             <Label>Bank name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., HBL" />
@@ -928,7 +923,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                     <tr>
                       <Th>Name</Th>
                       <Th>Tenor</Th>
-                      <Th>Additional %</Th>
+                      <Th>Spread</Th>
                       <Th>Max loan</Th>
                       <Th>Placeholder %</Th>
                       {isAdmin ? <Th /> : null}
@@ -991,18 +986,13 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                   </div>
 
                   <div className="space-y-1">
-                    <Label>Additional rate %</Label>
+                    <Label>Additional spread %</Label>
                     <Input value={additionalRate} onChange={(e) => setAdditionalRate(e.target.value)} inputMode="decimal" />
                   </div>
 
                   <div className="space-y-1">
                     <Label>Max loan amount</Label>
                     <Input value={maxLoanAmount} onChange={(e) => setMaxLoanAmount(e.target.value)} inputMode="decimal" placeholder="Optional" />
-                  </div>
-
-                  <div className="space-y-1">
-                    <Label>KIBOR placeholder rate %</Label>
-                    <Input value={placeholderRate} onChange={(e) => setPlaceholderRate(e.target.value)} inputMode="decimal" />
                   </div>
                 </div>
 

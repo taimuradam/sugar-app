@@ -1,20 +1,27 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from sqlalchemy.orm import Session
-from sqlalchemy import select
 
-from app.models.transaction import Transaction
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.models.bank import Bank
 from app.models.loan import Loan
 from app.models.rate import Rate
+from app.models.transaction import Transaction
 
 Q2 = Decimal("0.01")
+
 
 def d2(x: Decimal) -> Decimal:
     return x.quantize(Q2, rounding=ROUND_HALF_UP)
 
+
 def _to_dec(v) -> Decimal:
     return Decimal(str(v))
+
 
 def _prefetch_rates(s: Session, bank_id: int, end: date) -> dict[int, list[Rate]]:
     rows = (
@@ -31,7 +38,13 @@ def _prefetch_rates(s: Session, bank_id: int, end: date) -> dict[int, list[Rate]
         out.setdefault(int(r.tenor_months), []).append(r)
     return out
 
-def _latest_rate_percent_for_day(prefetched: dict[int, list[Rate]], tenor_months: int, day: date, placeholder: Decimal) -> Decimal:
+
+def _latest_rate_percent_for_day(
+    prefetched: dict[int, list[Rate]],
+    tenor_months: int,
+    day: date,
+    placeholder: Decimal,
+) -> Decimal:
     rs = prefetched.get(int(tenor_months), [])
     latest: Rate | None = None
     for r in rs:
@@ -42,6 +55,51 @@ def _latest_rate_percent_for_day(prefetched: dict[int, list[Rate]], tenor_months
     if latest is None:
         return placeholder
     return _to_dec(latest.annual_rate_percent)
+
+
+def _month_start(d: date) -> date:
+    return date(d.year, d.month, 1)
+
+
+def _next_month_start(d: date) -> date:
+    if d.month == 12:
+        return date(d.year + 1, 1, 1)
+    return date(d.year, d.month + 1, 1)
+
+
+@dataclass
+class _Tranche:
+    start_date: date
+    amount: Decimal
+
+
+def _apply_principal_tx(tranches: list[_Tranche], tx_date: date, amount: Decimal) -> None:
+    if amount == 0:
+        return
+
+    if amount > 0:
+        tranches.append(_Tranche(start_date=tx_date, amount=amount))
+        return
+
+    repay = -amount
+    tranches.sort(key=lambda t: t.start_date)
+    i = 0
+    while repay > 0 and i < len(tranches):
+        t = tranches[i]
+        if t.amount <= repay:
+            repay -= t.amount
+            t.amount = Decimal("0")
+            i += 1
+        else:
+            t.amount -= repay
+            repay = Decimal("0")
+
+    tranches[:] = [t for t in tranches if t.amount > 0]
+
+
+def _total_principal(tranches: list[_Tranche]) -> Decimal:
+    return sum((t.amount for t in tranches), Decimal("0"))
+
 
 def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: date):
     bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one()
@@ -65,57 +123,67 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
     if txs and txs[0].date < calc_start:
         calc_start = txs[0].date
 
-    bd = None
-    for t in txs:
-        if t.category == "principal" and float(t.amount) > 0:
-            bd = t.date
-            break
-
-    principal = Decimal("0")
-    accrued = Decimal("0")
-
     prefetched_rates = _prefetch_rates(s, bank_id, end)
 
-    locked_rate: Decimal | None = None
-    if bank.bank_type == "islamic" and bd is not None:
-        placeholder = _to_dec(loan.kibor_placeholder_rate_percent)
-        locked_base = _latest_rate_percent_for_day(prefetched_rates, int(loan.kibor_tenor_months), bd, placeholder)
-        addl = _to_dec(loan.additional_rate) if loan.additional_rate is not None else Decimal("0")
-        locked_rate = locked_base + addl
+    placeholder = _to_dec(loan.kibor_placeholder_rate_percent)
+    tenor = int(loan.kibor_tenor_months)
+    addl = _to_dec(loan.additional_rate) if loan.additional_rate is not None else Decimal("0")
 
-    day = calc_start
+    accrued = Decimal("0")
+    tranches: list[_Tranche] = []
+
+    def tranche_rate_base_for_day(day: date, tranche_start: date) -> Decimal:
+        if bank.bank_type == "islamic":
+            anchor = tranche_start
+        else:
+            if day < _next_month_start(tranche_start):
+                anchor = tranche_start
+            else:
+                anchor = _month_start(day)
+
+        return _latest_rate_percent_for_day(prefetched_rates, tenor, anchor, placeholder)
+
     rows: list[dict] = []
+    day = calc_start
     while day <= end:
         for t in tx_by_day.get(day, []):
             amt = _to_dec(t.amount)
             if t.category == "principal":
-                principal = principal + amt
+                _apply_principal_tx(tranches, t.date, amt)
             elif t.category == "markup":
-                accrued = accrued + amt
+                accrued += amt
 
         if accrued < Decimal("0"):
             accrued = Decimal("0")
 
-        if bank.bank_type == "islamic":
-            current_rate = locked_rate if locked_rate is not None else Decimal("0")
-        else:
-            addl = _to_dec(loan.additional_rate) if loan.additional_rate is not None else Decimal("0")
-            placeholder = _to_dec(loan.kibor_placeholder_rate_percent)
-            base = _latest_rate_percent_for_day(prefetched_rates, int(loan.kibor_tenor_months), day, placeholder)
-            current_rate = base + addl
+        weighted_daily_markup = Decimal("0")
+        for tr in tranches:
+            base = tranche_rate_base_for_day(day, tr.start_date)
+            rate_percent = base + addl
+            daily_rate = (rate_percent / Decimal("100")) / Decimal("365")
+            weighted_daily_markup += tr.amount * daily_rate
 
-        daily_rate = (current_rate / Decimal("100")) / Decimal("365")
-        daily_markup = d2(principal * daily_rate)
+        daily_markup = d2(weighted_daily_markup)
         accrued = d2(accrued + daily_markup)
 
         if day >= start:
+            principal_total = _total_principal(tranches)
+
+            if principal_total > 0:
+                weighted_rate = (
+                    sum((tr.amount * (tranche_rate_base_for_day(day, tr.start_date) + addl) for tr in tranches), Decimal("0"))
+                    / principal_total
+                )
+            else:
+                weighted_rate = Decimal("0")
+
             rows.append(
                 {
                     "date": day,
-                    "principal_balance": float(d2(principal)),
+                    "principal_balance": float(d2(principal_total)),
                     "daily_markup": float(daily_markup),
                     "accrued_markup": float(accrued),
-                    "rate_percent": float(current_rate),
+                    "rate_percent": float(weighted_rate),
                 }
             )
 

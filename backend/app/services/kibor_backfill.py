@@ -5,7 +5,7 @@ from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta
 from typing import Dict, Any
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,7 @@ from app.models.bank import Bank
 from app.models.loan import Loan
 from app.models.rate import Rate
 from app.models.transaction import Transaction
-from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
+from app.services.kibor import get_kibor_offer_rates
 
 
 @dataclass
@@ -35,13 +35,14 @@ def _key(bank_id: int, loan_id: int) -> str:
 
 
 def _iso_now() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.utcnow().isoformat() + "Z"
 
 
 def get_status(bank_id: int, loan_id: int) -> Dict[str, Any]:
     k = _key(bank_id, loan_id)
     with _lock:
         st = _status.get(k) or _Status()
+        _status[k] = st
         return asdict(st)
 
 
@@ -54,8 +55,22 @@ def _set_status(bank_id: int, loan_id: int, **updates):
         _status[k] = st
 
 
-def _is_business_day(d: date) -> bool:
-    return d.weekday() < 5
+def _month_start(d: date) -> date:
+    return date(d.year, d.month, 1)
+
+
+def _add_months(d: date, months: int) -> date:
+    y = d.year + (d.month - 1 + months) // 12
+    m = (d.month - 1 + months) % 12 + 1
+    return date(y, m, 1)
+
+
+def _iter_month_starts(start: date, end: date):
+    cur = _month_start(start)
+    last = _month_start(end)
+    while cur <= last:
+        yield cur
+        cur = _add_months(cur, 1)
 
 
 def _compute_missing_days(s: Session, bank_id: int, loan_id: int) -> list[date]:
@@ -64,47 +79,40 @@ def _compute_missing_days(s: Session, bank_id: int, loan_id: int) -> list[date]:
     if bank is None or loan is None:
         return []
 
-    borrow_date = (
+    principal_dates = (
         s.execute(
-            select(func.min(Transaction.date)).where(
+            select(Transaction.date)
+            .where(
                 Transaction.bank_id == bank_id,
                 Transaction.loan_id == loan_id,
                 Transaction.category == "principal",
                 Transaction.amount > 0,
             )
+            .distinct()
         )
-        .scalar_one()
+        .scalars()
+        .all()
     )
-    if borrow_date is None:
+    if not principal_dates:
         return []
 
-    start = adjust_to_last_business_day(borrow_date)
-    target = adjust_to_last_business_day(date.today())
+    earliest = min(principal_dates)
+    today = date.today()
+
+    anchor_dates: set[date] = set(principal_dates)
+
+    if bank.bank_type != "islamic":
+        for ms in _iter_month_starts(earliest, today):
+            anchor_dates.add(ms)
 
     tenor = int(loan.kibor_tenor_months)
-
-    if bank.bank_type == "islamic":
-        if not _is_business_day(start):
-            return []
-        exists = (
-            s.execute(
-                select(func.count()).select_from(Rate).where(
-                    Rate.bank_id == bank_id,
-                    Rate.tenor_months == tenor,
-                    Rate.effective_date == start,
-                )
-            )
-            .scalar_one()
-        )
-        return [] if int(exists) > 0 else [start]
 
     existing = (
         s.execute(
             select(Rate.effective_date).where(
                 Rate.bank_id == bank_id,
                 Rate.tenor_months == tenor,
-                Rate.effective_date >= start,
-                Rate.effective_date <= target,
+                Rate.effective_date.in_(sorted(anchor_dates)),
             )
         )
         .scalars()
@@ -112,13 +120,7 @@ def _compute_missing_days(s: Session, bank_id: int, loan_id: int) -> list[date]:
     )
     have = set(existing)
 
-    missing: list[date] = []
-    d = start
-    while d <= target:
-        if _is_business_day(d) and d not in have:
-            missing.append(d)
-        d = d + timedelta(days=1)
-    return missing
+    return sorted(anchor_dates - have)
 
 
 def _run_job(bank_id: int, loan_id: int):
@@ -136,12 +138,18 @@ def _run_job(bank_id: int, loan_id: int):
         for d in missing:
             try:
                 kib = get_kibor_offer_rates(d)
-                rates_by_tenor = kib.by_tenor_months()
-                offer = rates_by_tenor.get(tenor)
+                offer = kib.by_tenor_months().get(tenor)
                 if offer is not None:
                     stmt = (
                         pg_insert(Rate)
-                        .values({"bank_id": bank_id, "tenor_months": tenor, "effective_date": d, "annual_rate_percent": offer})
+                        .values(
+                            {
+                                "bank_id": bank_id,
+                                "tenor_months": tenor,
+                                "effective_date": d,  # IMPORTANT: store the ANCHOR date (tx date / month-start)
+                                "annual_rate_percent": offer,
+                            }
+                        )
                         .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
                     )
                     s.execute(stmt)
@@ -175,8 +183,16 @@ def ensure_started(bank_id: int, loan_id: int) -> Dict[str, Any]:
         _set_status(bank_id, loan_id, status="done", total_days=0, processed_days=0, started_at=None, message=None)
         return get_status(bank_id, loan_id)
 
-    _set_status(bank_id, loan_id, status="running", total_days=len(missing), processed_days=0, started_at=_iso_now(), message=None)
-    t = threading.Thread(target=_run_job, args=(bank_id, loan_id,), daemon=True)
+    _set_status(
+        bank_id,
+        loan_id,
+        status="running",
+        total_days=len(missing),
+        processed_days=0,
+        started_at=_iso_now(),
+        message=None,
+    )
+    t = threading.Thread(target=_run_job, args=(bank_id, loan_id), daemon=True)
     t.start()
     return get_status(bank_id, loan_id)
 
