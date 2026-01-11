@@ -8,5 +8,5 @@ class Rate(Base):
     bank_id: Mapped[int] = mapped_column(ForeignKey("banks.id", ondelete="CASCADE"), index=True)
     tenor_months: Mapped[int] = mapped_column(Integer, index=True)
     effective_date: Mapped[Date] = mapped_column(Date, index=True)
-    annual_rate_percent: Mapped[float] = mapped_column(Numeric(8, 4))
+    annual_rate_percent: Mapped[float] = mapped_column(Numeric(12, 6))
     created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now())

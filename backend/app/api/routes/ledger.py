@@ -29,4 +29,5 @@ def ledger(
             st = ensure_started(bank_id, loan_id)
         return JSONResponse(status_code=202, content=BackfillStatusOut(**st).model_dump())
 
-    return compute_ledger(s, bank_id, loan_id, start, end)
+    rows = compute_ledger(s, bank_id, loan_id, start, end)
+    return [LedgerRow(**r) for r in rows]

@@ -146,16 +146,16 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
     rows: list[dict] = []
     day = calc_start
     while day <= end:
+        # 1) Apply transactions for this day first
         for t in tx_by_day.get(day, []):
             amt = _to_dec(t.amount)
             if t.category == "principal":
                 _apply_principal_tx(tranches, t.date, amt)
             elif t.category == "markup":
+                # markup payments are stored as negative amounts (payments reduce accrued)
                 accrued += amt
 
-        if accrued < Decimal("0"):
-            accrued = Decimal("0")
-
+        # 2) Compute today's markup from current tranches (NO rounding here)
         weighted_daily_markup = Decimal("0")
         for tr in tranches:
             base = tranche_rate_base_for_day(day, tr.start_date)
@@ -163,15 +163,27 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
             daily_rate = (rate_percent / Decimal("100")) / Decimal("365")
             weighted_daily_markup += tr.amount * daily_rate
 
-        daily_markup = d2(weighted_daily_markup)
-        accrued = d2(accrued + daily_markup)
+        daily_markup = weighted_daily_markup
+        accrued = accrued + daily_markup
 
+        # 3) Accrued markup can never be negative
+        if accrued < Decimal("0"):
+            accrued = Decimal("0")
+
+        # 4) Emit row if within requested window
         if day >= start:
             principal_total = _total_principal(tranches)
 
             if principal_total > 0:
                 weighted_rate = (
-                    sum((tr.amount * (tranche_rate_base_for_day(day, tr.start_date) + addl) for tr in tranches), Decimal("0"))
+                    sum(
+                        (
+                            tr.amount
+                            * (tranche_rate_base_for_day(day, tr.start_date) + addl)
+                            for tr in tranches
+                        ),
+                        Decimal("0"),
+                    )
                     / principal_total
                 )
             else:
@@ -180,6 +192,7 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
             rows.append(
                 {
                     "date": day,
+                    # principal is typically displayed at 2dp; ok to round here
                     "principal_balance": float(d2(principal_total)),
                     "daily_markup": float(daily_markup),
                     "accrued_markup": float(accrued),
