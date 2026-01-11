@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
+from datetime import datetime, date
 
 from app.api.deps import db, current_user, require_admin
 from app.models.bank import Bank
 from app.models.loan import Loan
-from app.schemas.loan import LoanCreate, LoanOut
+from app.models.transaction import Transaction
+from app.schemas.loan import LoanCreate, LoanOut, LoanBalanceOut
 from app.services.audit import log_event
 
 router = APIRouter(prefix="/banks/{bank_id}/loans", tags=["loans"])
@@ -87,3 +89,30 @@ def delete_loan(bank_id: int, loan_id: int, s: Session = Depends(db), u=Depends(
         details={"bank_id": bank_id, "name": ln.name},
     )
     return {"ok": True}
+
+@router.get("/{loan_id}/balance", response_model=LoanBalanceOut)
+def loan_balance(bank_id: int, loan_id: int, s: Session = Depends(db), u=Depends(current_user)):
+    _require_bank(s, bank_id)
+    ln = s.execute(select(Loan).where(Loan.id == loan_id, Loan.bank_id == bank_id)).scalar_one_or_none()
+    if ln is None:
+        raise HTTPException(status_code=404, detail="loan_not_found")
+
+    as_of = date.today()
+    principal = (
+        s.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.bank_id == bank_id,
+                Transaction.loan_id == loan_id,
+                Transaction.category == "principal",
+                Transaction.date <= as_of,
+            )
+        )
+        .scalar_one()
+    )
+
+    return LoanBalanceOut(
+        bank_id=bank_id,
+        loan_id=loan_id,
+        principal_balance=float(principal),
+        as_of=datetime.utcnow(),
+    )

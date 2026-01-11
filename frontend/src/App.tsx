@@ -51,6 +51,8 @@ export default function App() {
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
   const [loans, setLoans] = useState<api.LoanOut[]>([]);
   const [selectedLoanId, setSelectedLoanId] = useState<number>(0);
+  const [transactionsVersion, setTransactionsVersion] = useState(0);
+  const bumpTransactionsVersion = () => setTransactionsVersion((v) => v + 1);
   const [loadingLoans, setLoadingLoans] = useState(false);
   const [loadingBanks, setLoadingBanks] = useState(false);
 
@@ -115,6 +117,48 @@ export default function App() {
 
   const selectedBank = useMemo(() => banks.find((b) => b.id === selectedBankId) || null, [banks, selectedBankId]);
   const selectedLoan = useMemo(() => loans.find((l) => l.id === selectedLoanId) || null, [loans, selectedLoanId]);
+
+    const [loanUsedPrincipal, setLoanUsedPrincipal] = useState<number | null>(null);
+    const [loanUsedLoading, setLoanUsedLoading] = useState(false);
+    const [loanUsedBackfillRunning, setLoanUsedBackfillRunning] = useState(false);
+
+    useEffect(() => {
+      let cancelled = false;
+
+      async function loadUsedPrincipal() {
+        if (!tokenReady || !selectedBankId || !selectedLoanId) {
+          setLoanUsedPrincipal(null);
+          setLoanUsedBackfillRunning(false);
+          return;
+        }
+
+        setLoanUsedLoading(true);
+        setLoanUsedBackfillRunning(false);
+
+        try {
+          const bal = await api.loanBalance(selectedBankId, selectedLoanId);
+          if (!cancelled) setLoanUsedPrincipal(bal.principal_balance ?? 0);
+        } catch {
+          if (!cancelled) setLoanUsedPrincipal(null);
+        } finally {
+          if (!cancelled) setLoanUsedLoading(false);
+        }
+      }
+
+      loadUsedPrincipal();
+      return () => {
+        cancelled = true;
+      };
+    }, [tokenReady, selectedBankId, selectedLoanId, transactionsVersion]);
+
+    const loanLimit = selectedLoan?.max_loan_amount ?? null;
+    const loanRemaining =
+      loanLimit != null && loanUsedPrincipal != null ? Math.max(0, loanLimit - loanUsedPrincipal) : null;
+
+    const loanUtilPct =
+      loanLimit != null && loanUsedPrincipal != null && loanLimit > 0
+        ? Math.min(100, Math.round((loanUsedPrincipal / loanLimit) * 100))
+        : 0;
 
   if (!tokenReady) {
     return (
@@ -279,6 +323,33 @@ export default function App() {
                               {selectedLoan.max_loan_amount == null ? "—" : fmtMoney(selectedLoan.max_loan_amount)}
                             </div>
                           </div>
+                            <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                              <div className="flex justify-between">
+                                <div className="text-slate-600">Used</div>
+                                <div className="font-mono">
+                                  {loanUsedLoading ? "…" : loanUsedPrincipal == null ? "—" : fmtMoney(loanUsedPrincipal)}
+                                </div>
+                              </div>
+
+                              <div className="flex justify-between">
+                                <div className="text-slate-600">Remaining</div>
+                                <div className="font-mono">
+                                  {loanLimit == null || loanUsedPrincipal == null ? "—" : fmtMoney(loanRemaining ?? 0)}
+                                </div>
+                              </div>
+
+                              {loanLimit == null ? null : (
+                                <div className="pt-1">
+                                  {loanUsedBackfillRunning ? (
+                                    <div className="mb-2 text-xs text-slate-500">
+                                      Utilization will update after KIBOR backfill finishes.
+                                    </div>
+                                  ) : null}
+
+                                  <Progress value={loanUtilPct}/>
+                                </div>
+                              )}
+                            </div>
                         </div>
                       )}
                     </div>
@@ -336,7 +407,10 @@ export default function App() {
                   loanId={selectedLoanId}
                   role={role}
                   onError={setError}
-                  onTransactionsChanged={() => refreshBanks(false)}
+                  onTransactionsChanged={async () => {
+                    await refreshBanks(false);
+                    bumpTransactionsVersion();
+                  }}
                 />
               )
             ) : tab === "loans" ? (
@@ -867,7 +941,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
   const [tenor, setTenor] = useState<"1" | "3" | "6">("1");
   const [additionalRate, setAdditionalRate] = useState<string>("0");
   const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
-  const [placeholderRate, setPlaceholderRate] = useState<string>("0");
+  const [placeholderRate, setKIBORRate] = useState<string>("0");
 
   const [items, setItems] = useState<api.LoanOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -904,7 +978,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
       setTenor("1");
       setAdditionalRate("0");
       setMaxLoanAmount("");
-      setPlaceholderRate("0");
+      setKIBORRate("0");
       toast.success("Loan created");
       await refresh();
       props.onLoansChanged();
@@ -936,7 +1010,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title="Loans" subtitle="Each bank can have multiple loans. Tenor / limits / additional rate live on the loan." />
+        <CardHeader title="Loans" subtitle="Each bank can have multiple loans." />
         <CardBody>
           {!props.bankId ? (
             <div className="text-sm text-slate-600">Select a bank first.</div>
@@ -956,7 +1030,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                       <Th>Tenor</Th>
                       <Th>Spread</Th>
                       <Th>Max loan</Th>
-                      <Th>Placeholder %</Th>
+                      <Th>KIBOR %</Th>
                       {isAdmin ? <Th /> : null}
                     </tr>
                   </thead>

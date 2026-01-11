@@ -20,6 +20,13 @@ export type LoanOut = {
   created_at?: string;
 };
 
+export type LoanBalanceOut = {
+  bank_id: number;
+  loan_id: number;
+  principal_balance: number;
+  as_of?: string | null;
+};
+
 export type TxCategory = "principal" | "markup";
 
 export type TxOut = {
@@ -187,6 +194,10 @@ export async function createLoan(
 
 export async function deleteLoan(bankId: number, loanId: number) {
   return await request<{ ok: boolean }>(`/banks/${bankId}/loans/${loanId}`, { method: "DELETE" });
+}
+
+export async function loanBalance(bankId: number, loanId: number) {
+  return await request<LoanBalanceOut>(`/banks/${bankId}/loans/${loanId}/balance`);
 }
 
 export async function listTxs(bankId: number, loanId: number, start?: string, end?: string) {

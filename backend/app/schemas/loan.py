@@ -20,3 +20,9 @@ class LoanOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class LoanBalanceOut(BaseModel):
+    bank_id: int
+    loan_id: int
+    principal_balance: float
+    as_of: datetime | None = None
