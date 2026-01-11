@@ -28,6 +28,42 @@ function fmtRate(n: number | null | undefined) {
   }).format(n);
 }
 
+function readStoredDateRange(key: string): { start: string; end: string } | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    const s = typeof j?.start === "string" ? j.start : "";
+    const e = typeof j?.end === "string" ? j.end : "";
+    if (s.length !== 10 || e.length !== 10) return null;
+    return { start: s, end: e };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDateRange(key: string, start: string, end: string) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ start, end }));
+  } catch {}
+}
+
+function readStoredDate(key: string): string | null {
+  try {
+    const v = localStorage.getItem(key);
+    if (!v || v.length !== 10) return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDate(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
 function BankTypeBadge({ bankType }: { bankType: string | undefined | null }) {
   const t = (bankType || "").trim().toLowerCase();
   const label = t === "islamic" ? "Islamic" : "Conventional";
@@ -313,7 +349,7 @@ export default function App() {
                           </div>
 
                           <div className="flex justify-between">
-                            <div className="text-slate-600">Additional spread</div>
+                            <div className="text-slate-600">Spread</div>
                             <div className="font-mono">{selectedLoan.additional_rate ?? 0}</div>
                           </div>
 
@@ -559,8 +595,20 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const [start, setStart] = useState(defaultStart);
-  const [end, setEnd] = useState(defaultEnd);
+  const rangeKey = `filters:ledger:global`;
+  const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
+  const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
+
+  useEffect(() => {
+    const st = readStoredDateRange(rangeKey);
+    setStart(st?.start ?? defaultStart);
+    setEnd(st?.end ?? defaultEnd);
+  }, [rangeKey]);
+
+  useEffect(() => {
+    writeStoredDateRange(rangeKey, start, end);
+  }, [rangeKey, start, end]);
+
   const [rows, setRows] = useState<api.LedgerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
@@ -715,8 +763,20 @@ function Transactions(props: {
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const [start, setStart] = useState(defaultStart);
-  const [end, setEnd] = useState(defaultEnd);
+  const rangeKey = `filters:tx:global`;
+  const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
+  const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
+
+  useEffect(() => {
+    const st = readStoredDateRange(rangeKey);
+    setStart(st?.start ?? defaultStart);
+    setEnd(st?.end ?? defaultEnd);
+  }, [rangeKey]);
+
+  useEffect(() => {
+    writeStoredDateRange(rangeKey, start, end);
+  }, [rangeKey, start, end]);
+
   const [rows, setRows] = useState<api.TxOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
@@ -727,7 +787,18 @@ function Transactions(props: {
       : 0;
 
 
-  const [date, setDate] = useState(defaultEnd);
+  const addDateKey = `filters:txAddDate:global`;
+  const [date, setDate] = useState(() => readStoredDate(addDateKey) ?? defaultEnd);
+
+  useEffect(() => {
+    const d = readStoredDate(addDateKey);
+    setDate(d ?? defaultEnd);
+  }, [addDateKey]);
+
+  useEffect(() => {
+    writeStoredDate(addDateKey, date);
+  }, [addDateKey, date]);
+
   const [category, setCategory] = useState<"principal" | "markup">("principal");
   const [direction, setDirection] = useState<"debit" | "credit">("debit");
   const [amount, setAmount] = useState<string>("");
@@ -1030,7 +1101,6 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                       <Th>Tenor</Th>
                       <Th>Spread</Th>
                       <Th>Max loan</Th>
-                      <Th>KIBOR %</Th>
                       {isAdmin ? <Th /> : null}
                     </tr>
                   </thead>
@@ -1041,7 +1111,6 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                         <Td>{l.kibor_tenor_months}m</Td>
                         <Td>{l.additional_rate ?? 0}</Td>
                         <Td>{l.max_loan_amount ?? "—"}</Td>
-                        <Td>{l.kibor_placeholder_rate_percent ?? 0}</Td>
                         {isAdmin ? (
                           <Td className="text-right">
                             <Button kind="danger" onClick={() => remove(l)}>
@@ -1091,7 +1160,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                   </div>
 
                   <div className="space-y-1">
-                    <Label>Additional spread %</Label>
+                    <Label>Spread %</Label>
                     <Input value={additionalRate} onChange={(e) => setAdditionalRate(e.target.value)} inputMode="decimal" />
                   </div>
 
@@ -1124,8 +1193,20 @@ function Report(props: { bankId: number; loanId: number; onError: (e: string) =>
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const [start, setStart] = useState(defaultStart);
-  const [end, setEnd] = useState(defaultEnd);
+  const rangeKey = `filters:report:global`;
+  const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
+  const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
+
+  useEffect(() => {
+    const st = readStoredDateRange(rangeKey);
+    setStart(st?.start ?? defaultStart);
+    setEnd(st?.end ?? defaultEnd);
+  }, [rangeKey]);
+
+  useEffect(() => {
+    writeStoredDateRange(rangeKey, start, end);
+  }, [rangeKey, start, end]);
+
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
 
@@ -1198,7 +1279,7 @@ function Report(props: { bankId: number; loanId: number; onError: (e: string) =>
       </div>
 
       <div className="text-sm text-slate-600">
-        Calls <span className="font-mono">GET /banks/{props.bankId}/report</span> and downloads the XLSX.
+        Downloads the XLSX.
       </div>
     </div>
   );
