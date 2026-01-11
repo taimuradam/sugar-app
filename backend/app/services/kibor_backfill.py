@@ -14,7 +14,7 @@ from app.models.bank import Bank
 from app.models.loan import Loan
 from app.models.rate import Rate
 from app.models.transaction import Transaction
-from app.services.kibor import get_kibor_offer_rates
+from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
 
 
 @dataclass
@@ -137,7 +137,8 @@ def _run_job(bank_id: int, loan_id: int):
         processed = 0
         for d in missing:
             try:
-                kib = get_kibor_offer_rates(d)
+                fetch_day = adjust_to_last_business_day(d)
+                kib = get_kibor_offer_rates(fetch_day)
                 offer = kib.by_tenor_months().get(tenor)
                 if offer is not None:
                     stmt = (

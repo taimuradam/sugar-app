@@ -26,6 +26,7 @@ def _require_bank_loan(s: Session, bank_id: int, loan_id: int) -> tuple[Bank, Lo
         raise HTTPException(status_code=404, detail="loan_not_found")
     return b, ln
 
+
 def _attach_kibor_rates(
     s: Session,
     bank: Bank,
@@ -37,38 +38,58 @@ def _attach_kibor_rates(
 
     tenor = int(loan.kibor_tenor_months)
 
-    # Islamic banks: fixed at the first stored rate for this bank+tenor.
-    if (bank.bank_type or "").strip().lower() == "islamic":
-        fixed = (
+    ph_f: float | None = None
+    if loan.kibor_placeholder_rate_percent is not None:
+        ph = float(loan.kibor_placeholder_rate_percent)
+        ph_f = ph if ph > 0 else None
+
+    bank_type = (bank.bank_type or "").strip().lower()
+
+    if bank_type == "islamic":
+        max_day = max(t.date for t in txs)
+        rate_rows = (
             s.execute(
-                select(Rate.annual_rate_percent)
-                .where(Rate.bank_id == bank.id, Rate.tenor_months == tenor)
+                select(Rate.effective_date, Rate.annual_rate_percent)
+                .where(
+                    Rate.bank_id == bank.id,
+                    Rate.tenor_months == tenor,
+                    Rate.effective_date <= max_day,
+                )
                 .order_by(Rate.effective_date.asc())
-                .limit(1)
             )
-            .scalar_one_or_none()
+            .all()
         )
-        fixed_f = float(fixed) if fixed is not None else None
-        if fixed_f is None and loan.kibor_placeholder_rate_percent is not None:
-            ph = float(loan.kibor_placeholder_rate_percent)
-            fixed_f = ph if ph > 0 else None
+        rates: list[tuple[date, float]] = [(d, float(r)) for (d, r) in rate_rows]
 
-        return [
-            TxOut(
-                id=t.id,
-                bank_id=t.bank_id,
-                loan_id=t.loan_id,
-                date=t.date,
-                category=t.category,
-                amount=float(t.amount),
-                kibor_rate_percent=fixed_f,
-                note=t.note,
-                created_at=t.created_at,
+        def latest_rate_on(day: date) -> float | None:
+            latest: float | None = None
+            for d, r in rates:
+                if d <= day:
+                    latest = r
+                else:
+                    break
+            return latest if latest is not None else ph_f
+
+        out: list[TxOut] = []
+        for t in txs:
+            rp: float | None = None
+            if t.category == "principal" and float(t.amount) > 0:
+                rp = latest_rate_on(t.date)
+            out.append(
+                TxOut(
+                    id=t.id,
+                    bank_id=t.bank_id,
+                    loan_id=t.loan_id,
+                    date=t.date,
+                    category=t.category,
+                    amount=float(t.amount),
+                    kibor_rate_percent=rp,
+                    note=t.note,
+                    created_at=t.created_at,
+                )
             )
-            for t in txs
-        ]
+        return out
 
-    # Conventional banks: rate is determined by the KIBOR table for the tx's business day.
     eff_dates = sorted({adjust_to_last_business_day(t.date) for t in txs})
     rate_rows = s.execute(
         select(Rate.effective_date, Rate.annual_rate_percent).where(
@@ -78,11 +99,6 @@ def _attach_kibor_rates(
         )
     ).all()
     rate_map: dict[date, float] = {d: float(r) for (d, r) in rate_rows}
-
-    ph_f: float | None = None
-    if loan.kibor_placeholder_rate_percent is not None:
-        ph = float(loan.kibor_placeholder_rate_percent)
-        ph_f = ph if ph > 0 else None
 
     out: list[TxOut] = []
     for t in txs:
@@ -102,6 +118,7 @@ def _attach_kibor_rates(
             )
         )
     return out
+
 
 @router.get("", response_model=list[TxOut])
 def list_transactions(
@@ -154,34 +171,70 @@ def add_tx(bank_id: int, loan_id: int, body: TxCreate, s: Session = Depends(db),
     s.refresh(t)
 
     if t.category == "principal" and float(t.amount) > 0:
-        borrow_date = (
-            s.execute(
-                select(func.min(Transaction.date)).where(
-                    Transaction.bank_id == bank_id,
-                    Transaction.loan_id == loan_id,
-                    Transaction.category == "principal",
-                    Transaction.amount > 0,
-                )
-            )
-            .scalar_one()
-        )
+        bank_type = (bank.bank_type or "").strip().lower()
 
-        if borrow_date == t.date:
-            bd = adjust_to_last_business_day(t.date)
-            kib = get_kibor_offer_rates(bd)
+        if bank_type == "islamic":
+            anchor = t.date
+            fetch_day = adjust_to_last_business_day(anchor)
+            kib = get_kibor_offer_rates(fetch_day)
             offer = kib.by_tenor_months().get(int(loan.kibor_tenor_months))
+
             if offer is not None:
                 stmt = (
                     pg_insert(Rate)
-                    .values({"bank_id": bank_id, "tenor_months": int(loan.kibor_tenor_months), "effective_date": bd, "annual_rate_percent": offer})
+                    .values(
+                        {
+                            "bank_id": bank_id,
+                            "tenor_months": int(loan.kibor_tenor_months),
+                            "effective_date": anchor,
+                            "annual_rate_percent": offer,
+                        }
+                    )
                     .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
                 )
                 s.execute(stmt)
-                loan.kibor_placeholder_rate_percent = float(offer)
-                s.add(loan)
-                s.commit()
 
-        if bank.bank_type != "islamic":
+                ph = float(loan.kibor_placeholder_rate_percent) if loan.kibor_placeholder_rate_percent is not None else 0.0
+                if ph <= 0:
+                    loan.kibor_placeholder_rate_percent = float(offer)
+                    s.add(loan)
+
+                s.commit()
+        else:
+            borrow_date = (
+                s.execute(
+                    select(func.min(Transaction.date)).where(
+                        Transaction.bank_id == bank_id,
+                        Transaction.loan_id == loan_id,
+                        Transaction.category == "principal",
+                        Transaction.amount > 0,
+                    )
+                )
+                .scalar_one()
+            )
+
+            if borrow_date == t.date:
+                bd = adjust_to_last_business_day(t.date)
+                kib = get_kibor_offer_rates(bd)
+                offer = kib.by_tenor_months().get(int(loan.kibor_tenor_months))
+                if offer is not None:
+                    stmt = (
+                        pg_insert(Rate)
+                        .values(
+                            {
+                                "bank_id": bank_id,
+                                "tenor_months": int(loan.kibor_tenor_months),
+                                "effective_date": bd,
+                                "annual_rate_percent": offer,
+                            }
+                        )
+                        .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
+                    )
+                    s.execute(stmt)
+                    loan.kibor_placeholder_rate_percent = float(offer)
+                    s.add(loan)
+                    s.commit()
+
             ensure_started(bank_id, loan_id)
 
     log_event(

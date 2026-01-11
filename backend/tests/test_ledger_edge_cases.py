@@ -185,3 +185,66 @@ def test_islamic_rate_locks_to_tranche_start_even_if_new_rates_appear(session):
     rows = compute_ledger(session, bank.id, loan.id, later_day, later_day)
     assert len(rows) == 1
     assert rows[0]["rate_percent"] == float(Decimal("10.0000") + Decimal("0.5000"))
+
+def test_islamic_multiple_tranches_lock_independently_and_no_tranche_cap(session):
+    bank, loan = _mk_bank_loan(
+        session,
+        bank_type="islamic",
+        tenor_months=1,
+        addl_rate_percent=Decimal("0.0000"),
+        placeholder=Decimal("0.0000"),
+    )
+
+    d1 = date(2026, 1, 1)
+    d2 = date(2026, 1, 3)
+    d3 = date(2026, 1, 5)
+    d_check = date(2026, 1, 6)
+
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d1, Decimal("10.8400"))
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d2, Decimal("11.0000"))
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d3, Decimal("9.5000"))
+
+    _add_tx(session, bank.id, loan.id, d1, "principal", Decimal("100.00"))
+    _add_tx(session, bank.id, loan.id, d2, "principal", Decimal("200.00"))
+    _add_tx(session, bank.id, loan.id, d3, "principal", Decimal("300.00"))
+
+    rows = compute_ledger(session, bank.id, loan.id, d_check, d_check)
+    assert len(rows) == 1
+    assert rows[0]["principal_balance"] == float(Decimal("600.00"))
+
+    expected_rate = (Decimal("100.00") * Decimal("10.8400") + Decimal("200.00") * Decimal("11.0000") + Decimal("300.00") * Decimal("9.5000")) / Decimal("600.00")
+    assert rows[0]["rate_percent"] == pytest.approx(float(expected_rate), rel=0, abs=1e-9)
+
+
+def test_islamic_tranche_rate_persists_after_partial_repayment(session):
+    bank, loan = _mk_bank_loan(
+        session,
+        bank_type="islamic",
+        tenor_months=1,
+        addl_rate_percent=Decimal("0.0000"),
+        placeholder=Decimal("0.0000"),
+    )
+
+    d1 = date(2026, 1, 1)
+    d2 = date(2026, 1, 3)
+    d3 = date(2026, 1, 5)
+    d_repay = date(2026, 1, 7)
+    d_check = date(2026, 1, 8)
+
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d1, Decimal("10.8400"))
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d2, Decimal("11.0000"))
+    _add_rate(session, bank.id, loan.kibor_tenor_months, d3, Decimal("9.5000"))
+
+    _add_tx(session, bank.id, loan.id, d1, "principal", Decimal("100.00"))
+    _add_tx(session, bank.id, loan.id, d2, "principal", Decimal("200.00"))
+    _add_tx(session, bank.id, loan.id, d3, "principal", Decimal("300.00"))
+
+    # Repay 150: fully clears the oldest 100 tranche and partially clears the next tranche (FIFO).
+    _add_tx(session, bank.id, loan.id, d_repay, "principal", Decimal("-150.00"))
+
+    rows = compute_ledger(session, bank.id, loan.id, d_check, d_check)
+    assert len(rows) == 1
+    assert rows[0]["principal_balance"] == float(Decimal("450.00"))
+
+    expected_rate = (Decimal("150.00") * Decimal("11.0000") + Decimal("300.00") * Decimal("9.5000")) / Decimal("450.00")
+    assert rows[0]["rate_percent"] == pytest.approx(float(expected_rate), rel=0, abs=1e-9)
