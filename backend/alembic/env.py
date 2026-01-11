@@ -2,6 +2,7 @@ import sys
 import os
 from pathlib import Path
 from logging.config import fileConfig
+
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
@@ -13,6 +14,9 @@ from app.models.user import User
 from app.models.bank import Bank
 from app.models.rate import Rate
 from app.models.transaction import Transaction
+from app.models.audit_log import AuditLog
+from app.models.bank_settings import BankSettings
+from app.models.loan import Loan
 
 config = context.config
 fileConfig(config.config_file_name)
@@ -23,6 +27,18 @@ def get_url():
     if url:
         return url
     return config.get_main_option("sqlalchemy.url")
+
+def run_migrations_offline():
+    url = get_url()
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
 
 def run_migrations_online():
     configuration = config.get_section(config.config_ini_section) or {}
@@ -39,4 +55,7 @@ def run_migrations_online():
         with context.begin_transaction():
             context.run_migrations()
 
-run_migrations_online()
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

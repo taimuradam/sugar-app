@@ -32,7 +32,7 @@ def upgrade():
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("bank_id", sa.Integer(), sa.ForeignKey("banks.id", ondelete="CASCADE"), nullable=False),
         sa.Column("effective_date", sa.Date(), nullable=False),
-        sa.Column("annual_rate_percent", sa.Numeric(8, 4), nullable=False),
+        sa.Column("annual_rate_percent", sa.Numeric(12, 6), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=True),
     )
     op.create_index("ix_rates_bank_id", "rates", ["bank_id"], unique=False)
