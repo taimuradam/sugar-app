@@ -498,7 +498,6 @@ function LoginCard(props: { error: string; onError: (e: string) => void; onLogin
       ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
       : 0;
 
-
   return (
     <Card className="self-center">
       <CardHeader title="Login" subtitle="Local dev default: admin/admin (after reseeding)." />
@@ -613,11 +612,70 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
 
+  const [loan, setLoan] = useState<api.LoanOut | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLoan() {
+      if (!props.loanId) {
+        setLoan(null);
+        return;
+      }
+      try {
+        const list = await api.listLoans(props.bankId);
+        if (!cancelled)
+          setLoan(list.find((l: api.LoanOut) => l.id === props.loanId) ?? null);
+      } catch {
+        if (!cancelled) setLoan(null);
+      }
+    }
+
+    loadLoan();
+    return () => {
+      cancelled = true;
+    };
+  }, [props.bankId, props.loanId]);
+
+  const kpi = useMemo(() => {
+    const startRow = rows.length ? rows[0] : null;
+    const endRow = rows.length ? rows[rows.length - 1] : null;
+
+    const usedPrincipal = endRow ? endRow.principal_balance : null;
+    const maxLoan = loan?.max_loan_amount ?? null;
+
+    const remainingLimit =
+      usedPrincipal !== null && maxLoan !== null ? maxLoan - usedPrincipal : null;
+
+    const utilizationPct =
+      usedPrincipal !== null && maxLoan !== null && maxLoan > 0
+        ? (usedPrincipal / maxLoan) * 100
+        : null;
+
+    const accruedMarkupInRange =
+      startRow && endRow ? endRow.accrued_markup - startRow.accrued_markup : null;
+
+    const currentRatePct = endRow ? endRow.rate_percent : null;
+
+    const utilClamped =
+      utilizationPct === null ? 0 : Math.max(0, Math.min(100, utilizationPct));
+
+    return {
+      usedPrincipal,
+      remainingLimit,
+      utilizationPct,
+      utilClamped,
+      accruedMarkupInRange,
+      currentRatePct,
+      maxLoan,
+      hasRows: rows.length > 0,
+    };
+  }, [rows, loan]);
+
   const backfillPct =
     backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
       ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
       : 0;
-
 
   async function refresh() {
     props.onError("");
@@ -638,14 +696,14 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
     }
   }
 
-    useEffect(() => {
-      if (!props.loanId) {
-        setRows([]);
-        setBackfillStatus(null);
-        return;
-      }
-      refresh();
-    }, [props.loanId]);
+  useEffect(() => {
+    if (!props.loanId) {
+      setRows([]);
+      setBackfillStatus(null);
+      return;
+    }
+    refresh();
+  }, [props.loanId]);
 
   useEffect(() => {
     if (!backfillStatus || backfillStatus.status !== "running") return;
@@ -674,6 +732,21 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
     };
   }, [backfillStatus?.status, props.loanId, start, end]);
 
+  function fmtCompactMoney(v: number) {
+    const sign = v < 0 ? "-" : "";
+    const n = Math.abs(v);
+
+    if (n >= 1_000_000_000_000) return `${sign}${(n / 1_000_000_000_000).toFixed(2)}T`;
+    if (n >= 1_000_000_000) return `${sign}${(n / 1_000_000_000).toFixed(2)}B`;
+    if (n >= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${sign}${(n / 1_000).toFixed(2)}K`;
+    return `${sign}${n.toFixed(2)}`;
+  }
+
+  function moneyKpi(v: number | null) {
+    if (v === null) return "-";
+    return fmtCompactMoney(v);
+  }
 
   return (
     <div className="space-y-5">
@@ -710,6 +783,91 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
         </div>
       ) : null}
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-900">Summary</div>
+          <div className="text-xs text-slate-500 tabular-nums">
+            {start} → {end}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Outstanding
+            </div>
+            <div
+              className="mt-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold text-slate-900 tabular-nums leading-tight"
+              title={kpi.usedPrincipal === null ? "" : fmtMoney(kpi.usedPrincipal)}
+            >
+              {moneyKpi(kpi.usedPrincipal)}
+            </div>
+            <div className="mt-0.5 text-[11px] text-slate-500">As of end date</div>
+          </div>
+
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Remaining limit
+            </div>
+            <div
+              className="mt-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold text-slate-900 tabular-nums leading-tight"
+              title={kpi.remainingLimit === null ? "" : fmtMoney(kpi.remainingLimit)}
+            >
+              {moneyKpi(kpi.remainingLimit)}
+            </div>
+            <div className="mt-0.5 min-w-0 truncate text-[11px] text-slate-500 tabular-nums">
+              <span title={kpi.maxLoan === null ? "" : fmtMoney(kpi.maxLoan)}>
+                Max: {moneyKpi(kpi.maxLoan)}
+              </span>
+            </div>
+          </div>
+
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Utilization
+              </div>
+              <div className="text-[11px] text-slate-500 tabular-nums">
+                {kpi.utilizationPct === null ? "-" : `${Number(kpi.utilizationPct).toFixed(2)}%`}
+              </div>
+            </div>
+
+            <div className="mt-2">
+              <Progress value={kpi.utilizationPct === null ? 0 : Math.round(kpi.utilClamped)} />
+            </div>
+
+            <div className="mt-1 min-w-0 truncate text-[11px] text-slate-500 tabular-nums">
+              {kpi.usedPrincipal === null || kpi.maxLoan === null
+                ? ""
+                : `${moneyKpi(kpi.usedPrincipal)} / ${moneyKpi(kpi.maxLoan)}`}
+            </div>
+          </div>
+
+          <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Markup (range)
+            </div>
+            <div
+              className="mt-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold text-slate-900 tabular-nums leading-tight"
+              title={kpi.accruedMarkupInRange === null ? "" : fmtMoney(kpi.accruedMarkupInRange)}
+            >
+              {moneyKpi(kpi.accruedMarkupInRange)}
+            </div>
+            <div className="mt-0.5 text-[11px] text-slate-500">End − start accrued</div>
+          </div>
+
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Current rate
+            </div>
+            <div className="mt-1 min-w-0 truncate text-lg font-semibold text-slate-900 tabular-nums leading-tight">
+              {kpi.currentRatePct === null ? "-" : `${fmtRate(kpi.currentRatePct)}%`}
+            </div>
+            <div className="mt-0.5 text-[11px] text-slate-500">Most recent in range</div>
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Ledger rows</div>
         <Table>
@@ -736,7 +894,7 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
                   <Td>{fmtMoney(r.principal_balance)}</Td>
                   <Td>{fmtMoney(r.daily_markup)}</Td>
                   <Td>{fmtMoney(r.accrued_markup)}</Td>
-                  <Td>{fmtMoney(r.rate_percent)}</Td>
+                  <Td>{fmtRate(r.rate_percent)}%</Td>
                 </tr>
               ))
             )}
