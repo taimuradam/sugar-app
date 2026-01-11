@@ -595,7 +595,7 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const rangeKey = "filters:dateRange:global";
+  const rangeKey = `filters:ledger:global`;
   const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
   const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
 
@@ -763,7 +763,7 @@ function Transactions(props: {
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const rangeKey = "filters:dateRange:global";
+  const rangeKey = `filters:tx:global`;
   const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
   const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
 
@@ -1193,7 +1193,7 @@ function Report(props: { bankId: number; loanId: number; onError: (e: string) =>
   const defaultEnd = `${yyyy}-${mm}-${dd}`;
   const defaultStart = `${yyyy}-${mm}-01`;
 
-  const rangeKey = "filters:dateRange:global";
+  const rangeKey = `filters:report:global`;
   const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
   const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
 
