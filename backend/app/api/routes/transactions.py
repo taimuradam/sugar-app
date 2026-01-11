@@ -90,20 +90,35 @@ def _attach_kibor_rates(
             )
         return out
 
-    eff_dates = sorted({adjust_to_last_business_day(t.date) for t in txs})
-    rate_rows = s.execute(
-        select(Rate.effective_date, Rate.annual_rate_percent).where(
-            Rate.bank_id == bank.id,
-            Rate.tenor_months == tenor,
-            Rate.effective_date.in_(eff_dates),
+    max_day = max(t.date for t in txs)
+    rate_rows = (
+        s.execute(
+            select(Rate.effective_date, Rate.annual_rate_percent)
+            .where(
+                Rate.bank_id == bank.id,
+                Rate.tenor_months == tenor,
+                Rate.effective_date <= max_day,
+            )
+            .order_by(Rate.effective_date.asc())
         )
-    ).all()
-    rate_map: dict[date, float] = {d: float(r) for (d, r) in rate_rows}
+        .all()
+    )
+    rates: list[tuple[date, float]] = [(d, float(r)) for (d, r) in rate_rows]
+
+    def latest_rate_on(day: date) -> float | None:
+        latest: float | None = None
+        for d, r in rates:
+            if d <= day:
+                latest = r
+            else:
+                break
+        return latest if latest is not None else ph_f
 
     out: list[TxOut] = []
     for t in txs:
-        eff = adjust_to_last_business_day(t.date)
-        rp = rate_map.get(eff, ph_f)
+        rp: float | None = None
+        if t.category == "principal" and float(t.amount) > 0:
+            rp = latest_rate_on(t.date)
         out.append(
             TxOut(
                 id=t.id,
@@ -200,40 +215,34 @@ def add_tx(bank_id: int, loan_id: int, body: TxCreate, s: Session = Depends(db),
                     s.add(loan)
 
                 s.commit()
-        else:
-            borrow_date = (
-                s.execute(
-                    select(func.min(Transaction.date)).where(
-                        Transaction.bank_id == bank_id,
-                        Transaction.loan_id == loan_id,
-                        Transaction.category == "principal",
-                        Transaction.amount > 0,
-                    )
-                )
-                .scalar_one()
-            )
 
-            if borrow_date == t.date:
-                bd = adjust_to_last_business_day(t.date)
-                kib = get_kibor_offer_rates(bd)
-                offer = kib.by_tenor_months().get(int(loan.kibor_tenor_months))
-                if offer is not None:
-                    stmt = (
-                        pg_insert(Rate)
-                        .values(
-                            {
-                                "bank_id": bank_id,
-                                "tenor_months": int(loan.kibor_tenor_months),
-                                "effective_date": bd,
-                                "annual_rate_percent": offer,
-                            }
-                        )
-                        .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
+        else:
+            anchor = t.date
+            fetch_day = adjust_to_last_business_day(anchor)
+            kib = get_kibor_offer_rates(fetch_day)
+            offer = kib.by_tenor_months().get(int(loan.kibor_tenor_months))
+
+            if offer is not None:
+                stmt = (
+                    pg_insert(Rate)
+                    .values(
+                        {
+                            "bank_id": bank_id,
+                            "tenor_months": int(loan.kibor_tenor_months),
+                            "effective_date": anchor,
+                            "annual_rate_percent": offer,
+                        }
                     )
-                    s.execute(stmt)
+                    .on_conflict_do_nothing(index_elements=["bank_id", "tenor_months", "effective_date"])
+                )
+                s.execute(stmt)
+
+                ph = float(loan.kibor_placeholder_rate_percent) if loan.kibor_placeholder_rate_percent is not None else 0.0
+                if ph <= 0:
                     loan.kibor_placeholder_rate_percent = float(offer)
                     s.add(loan)
-                    s.commit()
+
+                s.commit()
 
             ensure_started(bank_id, loan_id)
 

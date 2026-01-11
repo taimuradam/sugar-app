@@ -71,14 +71,20 @@ def _next_month_start(d: date) -> date:
 class _Tranche:
     start_date: date
     amount: Decimal
+    base_rate_percent: Decimal | None = None
 
 
-def _apply_principal_tx(tranches: list[_Tranche], tx_date: date, amount: Decimal) -> None:
+def _apply_principal_tx(
+    tranches: list[_Tranche],
+    tx_date: date,
+    amount: Decimal,
+    base_rate_percent: Decimal | None = None,
+) -> None:
     if amount == 0:
         return
 
     if amount > 0:
-        tranches.append(_Tranche(start_date=tx_date, amount=amount))
+        tranches.append(_Tranche(start_date=tx_date, amount=amount, base_rate_percent=base_rate_percent))
         return
 
     repay = -amount
@@ -132,33 +138,42 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
     accrued = Decimal("0")
     tranches: list[_Tranche] = []
 
-    def tranche_rate_base_for_day(day: date, tranche_start: date) -> Decimal:
-        if bank.bank_type == "islamic":
-            anchor = tranche_start
-        else:
-            if day < _next_month_start(tranche_start):
-                anchor = tranche_start
-            else:
-                anchor = _month_start(day)
+    month_rate_cache: dict[date, Decimal] = {}
 
-        return _latest_rate_percent_for_day(prefetched_rates, tenor, anchor, placeholder)
+    def _rate_for_month_start(ms: date) -> Decimal:
+        v = month_rate_cache.get(ms)
+        if v is None:
+            v = _latest_rate_percent_for_day(prefetched_rates, tenor, ms, placeholder)
+            month_rate_cache[ms] = v
+        return v
+
+    def tranche_rate_base_for_day(day: date, tr: _Tranche) -> Decimal:
+        if bank.bank_type == "islamic":
+            return _latest_rate_percent_for_day(prefetched_rates, tenor, tr.start_date, placeholder)
+
+        if day < _next_month_start(tr.start_date):
+            if tr.base_rate_percent is not None:
+                return tr.base_rate_percent
+            return _latest_rate_percent_for_day(prefetched_rates, tenor, tr.start_date, placeholder)
+
+        return _rate_for_month_start(_month_start(day))
 
     rows: list[dict] = []
     day = calc_start
     while day <= end:
-        # 1) Apply transactions for this day first
         for t in tx_by_day.get(day, []):
             amt = _to_dec(t.amount)
             if t.category == "principal":
-                _apply_principal_tx(tranches, t.date, amt)
+                base_rate = None
+                if bank.bank_type != "islamic" and amt > 0:
+                    base_rate = _latest_rate_percent_for_day(prefetched_rates, tenor, t.date, placeholder)
+                _apply_principal_tx(tranches, t.date, amt, base_rate_percent=base_rate)
             elif t.category == "markup":
-                # markup payments are stored as negative amounts (payments reduce accrued)
                 accrued += amt
 
-        # 2) Compute today's markup from current tranches (NO rounding here)
         weighted_daily_markup = Decimal("0")
         for tr in tranches:
-            base = tranche_rate_base_for_day(day, tr.start_date)
+            base = tranche_rate_base_for_day(day, tr)
             rate_percent = base + addl
             daily_rate = (rate_percent / Decimal("100")) / Decimal("365")
             weighted_daily_markup += tr.amount * daily_rate
@@ -166,22 +181,16 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
         daily_markup = weighted_daily_markup
         accrued = accrued + daily_markup
 
-        # 3) Accrued markup can never be negative
         if accrued < Decimal("0"):
             accrued = Decimal("0")
 
-        # 4) Emit row if within requested window
         if day >= start:
             principal_total = _total_principal(tranches)
 
             if principal_total > 0:
                 weighted_rate = (
                     sum(
-                        (
-                            tr.amount
-                            * (tranche_rate_base_for_day(day, tr.start_date) + addl)
-                            for tr in tranches
-                        ),
+                        (tr.amount * (tranche_rate_base_for_day(day, tr) + addl) for tr in tranches),
                         Decimal("0"),
                     )
                     / principal_total
@@ -192,7 +201,6 @@ def compute_ledger(s: Session, bank_id: int, loan_id: int, start: date, end: dat
             rows.append(
                 {
                     "date": day,
-                    # principal is typically displayed at 2dp; ok to round here
                     "principal_balance": float(d2(principal_total)),
                     "daily_markup": float(daily_markup),
                     "accrued_markup": float(accrued),
