@@ -961,18 +961,29 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-900">Ledger rows</div>
-        <Table>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-900">Ledger rows</div>
+
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold">
+              PKR
+            </span>
+            <span className="hidden sm:inline">Amounts are in PKR • Rates in %</span>
+          </div>
+        </div>
+
+        <Table className="tabular-nums">
           <thead>
             <tr>
-              <Th>Date</Th>
-              <Th>Principal Balance</Th>
-              <Th>Daily Markup</Th>
-              <Th>Accrued Markup</Th>
-              <Th>Rate %</Th>
+              <Th className="w-[180px]">Date</Th>
+              <Th className="text-right">Principal</Th>
+              <Th className="text-right">Daily markup</Th>
+              <Th className="text-right">Accrued markup</Th>
+              <Th className="text-right">Rate %</Th>
             </tr>
           </thead>
-          <tbody>
+
+          <tbody className="text-sm">
             {rows.length === 0 ? (
               <tr>
                 <Td colSpan={5} className="text-slate-600">
@@ -980,15 +991,26 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
                 </Td>
               </tr>
             ) : (
-              rows.map((r, i) => (
-                <tr key={i}>
-                  <Td>{r.date}</Td>
-                  <Td>{fmtMoney(r.principal_balance)}</Td>
-                  <Td>{fmtMoney(r.daily_markup)}</Td>
-                  <Td>{fmtMoney(r.accrued_markup)}</Td>
-                  <Td>{fmtRate(r.rate_percent)}%</Td>
-                </tr>
-              ))
+              rows.map((r, i) => {
+
+              const rowClass = cx(
+                "transition-colors hover:bg-slate-50",
+                i % 2 === 1 ? "bg-slate-50/40" : "bg-white"
+              );
+
+                return (
+                  <tr key={i} className={rowClass}>
+                    <Td className="whitespace-nowrap">
+                      <span className="text-slate-900">{r.date}</span>
+                    </Td>
+
+                    <Td className="text-right font-mono">{fmtMoney(r.principal_balance)}</Td>
+                    <Td className="text-right font-mono">{fmtMoney(r.daily_markup)}</Td>
+                    <Td className="text-right font-mono">{fmtMoney(r.accrued_markup)}</Td>
+                    <Td className="text-right font-mono">{fmtRate(r.rate_percent)}%</Td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </Table>
@@ -1180,14 +1202,14 @@ function Transactions(props: {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Transactions</div>
-        <Table>
+        <Table className="tabular-nums">
           <thead>
             <tr>
               <Th>Date</Th>
-              <Th>KIBOR %</Th>
+              <Th className="text-right">KIBOR %</Th>
               <Th>Category</Th>
               <Th>Direction</Th>
-              <Th>Amount</Th>
+              <Th className="text-right">Amount</Th>
               <Th>Note</Th>
               {isAdmin ? <Th /> : null}
             </tr>
@@ -1200,16 +1222,22 @@ function Transactions(props: {
                 </Td>
               </tr>
             ) : (
-              rows.map((t) => {
+              rows.map((t, i) => {
                 const dir = t.amount < 0 ? "credit" : "debit";
                 const abs = Math.abs(t.amount);
                 return (
-                  <tr key={t.id}>
-                    <Td>{t.date}</Td>
-                    <Td className="font-mono">{fmtRate(t.kibor_rate_percent)}</Td>
+                  <tr
+                    key={t.id}
+                    className={cx(
+                      "transition-colors hover:bg-slate-50",
+                      i % 2 === 1 ? "bg-slate-50/40" : "bg-white"
+                    )}
+                  >
+                    <Td className="whitespace-nowrap">{t.date}</Td>
+                    <Td className="text-right font-mono">{fmtRate(t.kibor_rate_percent)}</Td>
                     <Td className="font-mono">{t.category}</Td>
                     <Td className="font-mono">{dir}</Td>
-                    <Td className="font-mono">{fmtMoney(abs)}</Td>
+                    <Td className="text-right font-mono">{fmtMoney(abs)}</Td>
                     <Td className="max-w-[420px] truncate whitespace-nowrap">{t.note || ""}</Td>
                     {isAdmin ? (
                       <Td className="text-right">
@@ -1343,23 +1371,29 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
               </div>
 
               <div className="mt-4 overflow-x-auto">
-                <Table>
+                <Table className="tabular-nums">
                   <thead>
                     <tr>
                       <Th>Name</Th>
-                      <Th>Tenor</Th>
-                      <Th>Spread</Th>
-                      <Th>Max loan</Th>
+                      <Th className="text-right">Tenor</Th>
+                      <Th className="text-right">Spread %</Th>
+                      <Th className="text-right">Max loan</Th>
                       {isAdmin ? <Th /> : null}
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((l) => (
-                      <tr key={l.id}>
+                    {items.map((l, i) => (
+                      <tr
+                        key={l.id}
+                        className={cx(
+                          "transition-colors hover:bg-slate-50",
+                          i % 2 === 1 ? "bg-slate-50/40" : "bg-white"
+                        )}
+                      >
                         <Td className="font-medium">{l.name}</Td>
-                        <Td>{l.kibor_tenor_months}m</Td>
-                        <Td>{l.additional_rate ?? 0}</Td>
-                        <Td>{l.max_loan_amount ?? "—"}</Td>
+                        <Td className="text-right font-mono">{l.kibor_tenor_months}m</Td>
+                        <Td className="text-right font-mono">{fmtRate(l.additional_rate ?? 0)}%</Td>
+                        <Td className="text-right font-mono">{l.max_loan_amount == null ? "—" : fmtMoney(l.max_loan_amount)}</Td>
                         {isAdmin ? (
                           <Td className="text-right">
                             <Button kind="danger" onClick={() => remove(l)}>
@@ -1626,7 +1660,7 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
         </Button>
 
         <div className="mt-3">
-          <Table>
+          <Table className="tabular-nums">
             <thead>
               <tr>
                 <Th>Username</Th>
@@ -1642,8 +1676,14 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
                   </Td>
                 </tr>
               ) : (
-                rows.map((u) => (
-                  <tr key={u.id}>
+                rows.map((u, i) => (
+                  <tr
+                    key={u.id}
+                    className={cx(
+                      "transition-colors hover:bg-slate-50",
+                      i % 2 === 1 ? "bg-slate-50/40" : "bg-white"
+                    )}
+                  >
                     <Td className="font-mono">{u.username}</Td>
                     <Td className="font-mono">{u.role}</Td>
                     <Td className="text-right">
@@ -1802,25 +1842,31 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <Table>
+          <Table className="tabular-nums">
             <thead>
               <tr>
                 <Th>Time</Th>
                 <Th>User</Th>
                 <Th>Action</Th>
                 <Th>Entity</Th>
-                <Th>ID</Th>
+                <Th className="text-right">ID</Th>
                 <Th>Details</Th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="align-top">
-                  <Td className="whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</Td>
+              {rows.map((r, i) => (
+                <tr
+                  key={r.id}
+                  className={cx(
+                    "align-top transition-colors hover:bg-slate-50",
+                    i % 2 === 1 ? "bg-slate-50/40" : "bg-white"
+                  )}
+                >
+                  <Td className="whitespace-nowrap font-mono">{new Date(r.created_at).toLocaleString()}</Td>
                   <Td className="whitespace-nowrap">{r.username}</Td>
-                  <Td className="whitespace-nowrap">{r.action}</Td>
-                  <Td className="whitespace-nowrap">{r.entity_type}</Td>
-                  <Td className="whitespace-nowrap">{r.entity_id ?? "-"}</Td>
+                  <Td className="whitespace-nowrap font-mono">{r.action}</Td>
+                  <Td className="whitespace-nowrap font-mono">{r.entity_type}</Td>
+                  <Td className="whitespace-nowrap text-right font-mono">{r.entity_id ?? "-"}</Td>
                   <Td className="min-w-[380px]">
                     <pre className="whitespace-pre-wrap rounded-xl bg-slate-50 p-2 text-xs text-slate-700">
                       {r.details ? JSON.stringify(r.details, null, 2) : "{}"}
