@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 cd /d "%~dp0\.."
 
@@ -29,6 +29,29 @@ if %ERRORLEVEL% NEQ 0 (
   echo.
   echo ERROR: Docker failed to start the app.
   echo Try: close Docker Desktop, reopen it, wait for "Engine running", then run again.
+  pause
+  exit /b 1
+)
+
+echo Waiting for backend to be ready...
+set "READY=0"
+
+for /L %%i in (1,1,60) do (
+  docker compose -f docker-compose.local.yml exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2); print('ok')" >NUL 2>NUL
+  if !ERRORLEVEL! EQU 0 (
+    set "READY=1"
+    goto :backend_ready
+  )
+  timeout /t 1 >NUL
+)
+
+:backend_ready
+if "%READY%" NEQ "1" (
+  echo.
+  echo ERROR: Backend did not become ready in time.
+  echo Try running:
+  echo   docker compose -f docker-compose.local.yml logs -f backend
+  echo.
   pause
   exit /b 1
 )
