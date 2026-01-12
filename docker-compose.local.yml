@@ -23,10 +23,10 @@ services:
     # No source mount and no reload for employee (more stable)
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-  web:
+    web:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: /api
     depends_on:
