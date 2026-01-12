@@ -9,6 +9,8 @@ import {
   Trash2,
   Plus,
   ClipboardList,
+  ChevronDown,
+  User,
 } from "lucide-react";
 import * as api from "./api";
 import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast, Progress } from "./ui";
@@ -91,6 +93,29 @@ export default function App() {
   const bumpTransactionsVersion = () => setTransactionsVersion((v) => v + 1);
   const [loadingLoans, setLoadingLoans] = useState(false);
   const [loadingBanks, setLoadingBanks] = useState(false);
+
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!userMenuOpen) return;
+      const el = userMenuRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setUserMenuOpen(false);
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setUserMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [userMenuOpen]);
 
   const isAdmin = role === "admin";
 
@@ -236,9 +261,6 @@ export default function App() {
             </div>
             <div>
               <div className="text-sm font-semibold text-slate-900">Finance dashboard</div>
-              <div className="text-xs text-slate-500">
-                Role: <span className="font-mono">{role === "user" ? "viewer" : role}</span>
-              </div>
             </div>
           </div>
 
@@ -276,17 +298,52 @@ export default function App() {
               </Select>
             </div>
 
-            <Button
-              kind="secondary"
-              onClick={() => {
-                api.clearToken();
-                setTokenReady(false);
-                setRole("");
-              }}
-            >
-              <LogOut className="h-4 w-4" />
-              Logout
-            </Button>
+            <div className="relative" ref={userMenuRef}>
+              <button
+                type="button"
+                onClick={() => setUserMenuOpen((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+              >
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                  <User className="h-4 w-4" />
+                </span>
+                <div className="flex flex-col items-start leading-tight">
+                  <span className="text-xs text-slate-500">Signed in as</span>
+                  <span className="font-mono text-xs">{role === "user" ? "viewer" : role}</span>
+                </div>
+                <ChevronDown className={cx("h-4 w-4 text-slate-500 transition", userMenuOpen && "rotate-180")} />
+              </button>
+
+              {userMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60"
+                >
+                  <div className="px-4 py-3">
+                    <div className="text-xs font-semibold text-slate-900">Account</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Role: <span className="font-mono">{role === "user" ? "viewer" : role}</span>
+                    </div>
+                  </div>
+                  <div className="h-px bg-slate-100" />
+                  <button
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      api.clearToken();
+                      setTokenReady(false);
+                      setRole("");
+                    }}
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -510,8 +567,10 @@ function NavButton(props: { active: boolean; onClick: () => void; icon: React.Re
     <button
       onClick={props.onClick}
       className={cx(
-        "flex w-full items-center gap-2 rounded-2xl border px-4 py-3 text-left text-sm font-medium transition",
-        props.active ? "border-slate-300 bg-white text-slate-900" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
+        "group relative flex w-full items-center gap-2 rounded-2xl border px-4 py-3 pl-5 text-left text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-slate-200",
+        props.active
+          ? "border-slate-300 bg-white text-slate-900 shadow-sm"
+          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
       )}
     >
       {props.icon}
