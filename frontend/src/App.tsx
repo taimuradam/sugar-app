@@ -95,6 +95,7 @@ export default function App() {
   const isAdmin = role === "admin";
 
   const toast = useToast();
+  const confirm = useConfirm();
 
   async function refreshBanks(pickFirst = false) {
     setLoadingBanks(true);
@@ -313,13 +314,45 @@ export default function App() {
                   <div className="text-sm text-slate-600">No bank selected.</div>
                 ) : (
                   <div className="space-y-3 text-sm">
-                    {/* Bank name + badge + loan count */}
-                    <div className="flex items-start justify-between gap-3">
+                    {/* Bank name + badge + loan count + actions */}
+                    <div className="group flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate text-lg font-semibold text-slate-900">
-                          {selectedBank.name}
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-lg font-semibold text-slate-900">{selectedBank.name}</div>
+
+                          {/* Actions (subtle) */}
+                          {isAdmin ? (
+                            <button
+                              type="button"
+                              title="Delete bank"
+                              className="ml-1 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-slate-400 opacity-40 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-rose-200 group-hover:opacity-100"
+                              onClick={async () => {
+                                const ok = await confirm({
+                                  title: "Delete bank?",
+                                  body: `This will permanently delete “${selectedBank.name}” and all its loans, transactions, and rates.`,
+                                  confirmText: "Delete bank",
+                                  danger: true,
+                                });
+                                if (!ok) return;
+
+                                try {
+                                  await api.deleteBank(selectedBank.id);
+                                  setSelectedLoanId(0);
+                                  setLoans([]);
+                                  await refreshBanks(true);
+                                  toast.success("Bank deleted");
+                                } catch (e: any) {
+                                  toast.error(e?.message || "Failed to delete bank");
+                                }
+                              }}
+                            >
+                              <span className="sr-only">Delete bank</span>
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : null}
                         </div>
-                        <div className="mt-1 flex items-center gap-2">
+
+                        <div className="mt-2 flex items-center gap-2">
                           <BankTypeBadge bankType={selectedBank.bank_type} />
                           <span className="text-xs text-slate-500">
                             {(loans?.length ?? 0)} loan{(loans?.length ?? 0) === 1 ? "" : "s"}
@@ -1146,7 +1179,6 @@ function Transactions(props: {
                           }}
                         >
                           <Trash2 className="h-4 w-4" />
-                          Delete
                         </Button>
                       </Td>
                     ) : null}
@@ -1273,7 +1305,6 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                           <Td className="text-right">
                             <Button kind="danger" onClick={() => remove(l)}>
                               <Trash2 className="h-4 w-4" />
-                              Delete
                             </Button>
                           </Td>
                         ) : null}
@@ -1581,7 +1612,6 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
                         }}
                       >
                         <Trash2 className="h-4 w-4" />
-                        Delete
                       </Button>
                     </Td>
                   </tr>
