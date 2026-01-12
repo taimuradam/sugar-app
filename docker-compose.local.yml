@@ -5,10 +5,13 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
       POSTGRES_DB: finance
-    ports:
-      - "5432:5432"
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d finance"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   backend:
     build: ./backend
@@ -16,12 +19,14 @@ services:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/finance
       JWT_SECRET: devsecret
       CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      AUTO_MIGRATE: "1"
+      AUTO_SEED_ADMIN: "1"
+      SEED_ADMIN_USER: "admin"
+      SEED_ADMIN_PASS: "admin"
     depends_on:
       - db
     ports:
       - "8000:8000"
-    # No source mount and no reload for employee (more stable)
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   web:
     build:
@@ -33,3 +38,6 @@ services:
       - backend
     ports:
       - "8080:80"
+
+volumes:
+  pgdata:
