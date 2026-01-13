@@ -148,9 +148,30 @@ export default function App() {
   const [scopeStart, setScopeStart] = useState(() => readStoredDateRange(scopeKey)?.start ?? defaultScopeStart);
   const [scopeEnd, setScopeEnd] = useState(() => readStoredDateRange(scopeKey)?.end ?? defaultScopeEnd);
 
+  const [draftScopeStart, setDraftScopeStart] = useState(() => readStoredDateRange(scopeKey)?.start ?? defaultScopeStart);
+  const [draftScopeEnd, setDraftScopeEnd] = useState(() => readStoredDateRange(scopeKey)?.end ?? defaultScopeEnd);
+
+  useEffect(() => {
+    setDraftScopeStart(scopeStart);
+    setDraftScopeEnd(scopeEnd);
+  }, [scopeStart, scopeEnd]);
+
+  const scopeInvalid = !!draftScopeStart && !!draftScopeEnd && draftScopeStart > draftScopeEnd;
+  const scopeHasPending = draftScopeStart !== scopeStart || draftScopeEnd !== scopeEnd;
+
   useEffect(() => {
     writeStoredDateRange(scopeKey, scopeStart, scopeEnd);
   }, [scopeKey, scopeStart, scopeEnd]);
+
+  useEffect(() => {
+    if (!scopeHasPending) return;
+    if (scopeInvalid) return;
+    const t = window.setTimeout(() => {
+      setScopeStart(draftScopeStart);
+      setScopeEnd(draftScopeEnd);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [draftScopeStart, draftScopeEnd, scopeHasPending, scopeInvalid]);
 
   const [refreshTick, setRefreshTick] = useState(0);
   const [pendingScrollToAddTx, setPendingScrollToAddTx] = useState(false);
@@ -172,6 +193,9 @@ export default function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
 
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const presetsRef = React.useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       if (!userMenuOpen) return;
@@ -191,6 +215,26 @@ export default function App() {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [userMenuOpen]);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!presetsOpen) return;
+      const el = presetsRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setPresetsOpen(false);
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setPresetsOpen(false);
+    }
+
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [presetsOpen]);
 
   const isAdmin = role === "admin";
 
@@ -241,6 +285,35 @@ export default function App() {
     if (selectedBankId) {
       await refreshBanks(false);
       await refreshLoans(selectedBankId, false);
+    }
+  }
+
+  function toISODate(d: Date) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function presetRange(start: string, end: string) {
+    setDraftScopeStart(start);
+    setDraftScopeEnd(end);
+    setScopeStart(start);
+    setScopeEnd(end);
+  }
+
+  async function presetAllTime() {
+    if (!selectedBankId || !selectedLoanId) {
+      presetRange(defaultScopeStart, defaultScopeEnd);
+      return;
+    }
+    try {
+      const b = await api.loanDateBounds(selectedBankId, selectedLoanId);
+      const start = b?.min_date || defaultScopeStart;
+      const end = b?.max_date || defaultScopeEnd;
+      presetRange(start, end);
+    } catch {
+      presetRange(defaultScopeStart, defaultScopeEnd);
     }
   }
 
@@ -340,7 +413,7 @@ export default function App() {
         <div className="mx-auto max-w-6xl px-4 py-3">
           <div className="rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/40">
             <div className="px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3_toggle">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="rounded-2xl border border-slate-200 bg-white p-3">
                     <Building2 className="h-5 w-5 text-slate-700" />
@@ -351,10 +424,6 @@ export default function App() {
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
-                  <Button size="sm" kind="secondary" onClick={refreshScope}>
-                    Refresh
-                  </Button>
-
                   <div className="relative" ref={userMenuRef}>
                     <button
                       type="button"
@@ -403,12 +472,11 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.1fr_1.1fr_1.6fr_auto] lg:items-center">
+                  {/* Bank */}
                   <div className="min-w-0">
-                    <div className="flex items-center justify-between">
-                      <Label className="mb-0">Bank</Label>
-                    </div>
+                    <Label className="mb-0.5">Bank</Label>
                     <Select
                       value={selectedBankId ? String(selectedBankId) : ""}
                       onChange={(e) => setSelectedBankId(Number(e.target.value))}
@@ -423,8 +491,9 @@ export default function App() {
                     </Select>
                   </div>
 
+                  {/* Loan */}
                   <div className="min-w-0">
-                    <Label className="mb-0">Loan</Label>
+                    <Label className="mb-0.5">Loan</Label>
                     <Select
                       value={selectedLoanId ? String(selectedLoanId) : ""}
                       onChange={(e) => setSelectedLoanId(Number(e.target.value))}
@@ -440,14 +509,20 @@ export default function App() {
                     </Select>
                   </div>
 
-                  <div className="min-w-0">
-                    <Label className="mb-0">Date range</Label>
-                    <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+                  {/* Date range */}
+                  <div className="min-w-0 items-center">
+                    <div className="flex items-end justify-between gap-3">
+                      <Label className="mb-1">Date range</Label>
+                      {scopeHasPending && !scopeInvalid ? <span className="text-[11px] text-slate-500">Updating…</span> : null}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
                       <Input
                         className="tabular-nums"
                         type="date"
-                        value={scopeStart}
-                        onChange={(e) => setScopeStart(e.target.value)}
+                        value={draftScopeStart}
+                        onChange={(e) => setDraftScopeStart(e.target.value)}
+                        error={scopeInvalid ? " " : undefined}
                       />
 
                       <div className="hidden select-none items-center justify-center text-xs text-slate-400 sm:flex">→</div>
@@ -455,10 +530,79 @@ export default function App() {
                       <Input
                         className="tabular-nums"
                         type="date"
-                        value={scopeEnd}
-                        onChange={(e) => setScopeEnd(e.target.value)}
+                        value={draftScopeEnd}
+                        onChange={(e) => setDraftScopeEnd(e.target.value)}
+                        error={scopeInvalid ? "Start must be ≤ end" : undefined}
                       />
                     </div>
+
+                    {/* Presets */}
+                    <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
+                      <div className="inline-flex overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <button
+                          type="button"
+                          className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          onClick={() => presetRange(defaultScopeStart, defaultScopeEnd)}
+                        >
+                          This month
+                        </button>
+
+                        <div className="w-px bg-slate-200" />
+
+                        <button
+                          type="button"
+                          className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          onClick={() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() - 29);
+                            presetRange(toISODate(d), defaultScopeEnd);
+                          }}
+                        >
+                          Last 30 days
+                        </button>
+
+                        <div className="w-px bg-slate-200" />
+
+                        <button
+                          type="button"
+                          className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          onClick={() => presetRange(`${yyyy}-01-01`, defaultScopeEnd)}
+                        >
+                          YTD
+                        </button>
+
+                        <div className="w-px bg-slate-200" />
+
+                        <button
+                          type="button"
+                          className={cx(
+                            "px-3 py-2 text-xs font-semibold hover:bg-slate-50",
+                            !selectedLoanId ? "cursor-not-allowed text-slate-400" : "text-slate-700"
+                          )}
+                          disabled={!selectedLoanId}
+                          onClick={() => void presetAllTime()}
+                        >
+                          All time
+                        </button>
+                      </div>
+
+                      {scopeInvalid ? (
+                        <span className="text-xs font-medium text-rose-600">Fix the date range to refresh.</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-start gap-2 lg:justify-end">
+                    <Button
+                      size="sm"
+                      kind="secondary"
+                      type="button"
+                      onClick={refreshScope}
+                      disabled={scopeInvalid || scopeHasPending}
+                    >
+                      Refresh
+                    </Button>
                   </div>
                 </div>
               </div>

@@ -8,6 +8,7 @@ from app.models.bank import Bank
 from app.models.loan import Loan
 from app.models.transaction import Transaction
 from app.schemas.loan import LoanCreate, LoanOut, LoanBalanceOut
+from app.schemas.date_bounds import LoanDateBoundsOut
 from app.services.audit import log_event
 
 router = APIRouter(prefix="/banks/{bank_id}/loans", tags=["loans"])
@@ -69,6 +70,21 @@ def create_loan(bank_id: int, body: LoanCreate, s: Session = Depends(db), u=Depe
     )
     return ln
 
+@router.get("/{loan_id}/date-bounds", response_model=LoanDateBoundsOut)
+def loan_date_bounds(bank_id: int, loan_id: int, s: Session = Depends(db), u=Depends(current_user)):
+    _require_bank(s, bank_id)
+    ln = s.execute(select(Loan).where(Loan.id == loan_id, Loan.bank_id == bank_id)).scalar_one_or_none()
+    if ln is None:
+        raise HTTPException(status_code=404, detail="loan_not_found")
+
+    row = s.execute(
+        select(func.min(Transaction.date), func.max(Transaction.date)).where(
+            Transaction.bank_id == bank_id,
+            Transaction.loan_id == loan_id,
+        )
+    ).one()
+
+    return LoanDateBoundsOut(min_date=row[0], max_date=row[1])
 
 @router.delete("/{loan_id}")
 def delete_loan(bank_id: int, loan_id: int, s: Session = Depends(db), u=Depends(require_admin)):
