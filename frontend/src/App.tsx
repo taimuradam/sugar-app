@@ -310,7 +310,7 @@ export default function App() {
     try {
       const b = await api.loanDateBounds(selectedBankId, selectedLoanId);
       const start = b?.min_date || defaultScopeStart;
-      const end = b?.max_date || defaultScopeEnd;
+      const end = defaultScopeEnd;
       presetRange(start, end);
     } catch {
       presetRange(defaultScopeStart, defaultScopeEnd);
