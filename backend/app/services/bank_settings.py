@@ -1,4 +1,4 @@
-from datetime import date
+from app.utils.timezone import today_karachi
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,4 +27,4 @@ def get_settings_for_year(s: Session, bank_id: int, year: int):
 
 
 def resolve_year(body_year: int | None):
-    return body_year if body_year is not None else date.today().year
+    return body_year if body_year is not None else today_karachi().year

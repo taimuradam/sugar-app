@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.models.bank import Bank
 from app.models.rate import Rate
 from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
+from app.utils.timezone import today_karachi
 
 
 def _is_islamic(bank_type: str) -> bool:
@@ -31,7 +32,7 @@ _last_probe_borrow_min: date | None = None
 
 
 def backfill_missing_kibor_rates(s: Session) -> None:
-    target_day = adjust_to_last_business_day(date.today())
+    target_day = adjust_to_last_business_day(today_karachi())
 
     banks = s.execute(select(Bank)).scalars().all()
     if not banks:
@@ -133,7 +134,7 @@ def backfill_missing_kibor_rates(s: Session) -> None:
 def maybe_refresh_kibor_rates(s: Session) -> None:
     global _last_probe_day, _last_probe_ts, _last_probe_latest, _last_probe_borrow_min
 
-    target_day = adjust_to_last_business_day(date.today())
+    target_day = adjust_to_last_business_day(today_karachi())
     latest = s.execute(select(func.max(Rate.effective_date))).scalar_one()
 
     borrow_min = (

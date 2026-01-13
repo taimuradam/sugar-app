@@ -17,6 +17,45 @@ import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table
 
 type Tab = "ledger" | "transactions" | "loans" | "users" | "audit";
 
+const KARACHI_TZ = "Asia/Karachi";
+
+function karachiTodayParts(base: Date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: KARACHI_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(base);
+
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return { yyyy: get("year"), mm: get("month"), dd: get("day") };
+}
+
+function karachiTodayISO(base: Date = new Date()) {
+  const { yyyy, mm, dd } = karachiTodayParts(base);
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function karachiMonthStartISO(base: Date = new Date()) {
+  const { yyyy, mm } = karachiTodayParts(base);
+  return `${yyyy}-${mm}-01`;
+}
+
+function shiftISODate(iso: string, deltaDays: number) {
+  const [y, m, d] = iso.split("-").map((x) => Number(x));
+  const t = Date.UTC(y, m - 1, d) + deltaDays * 24 * 60 * 60 * 1000;
+  const dt = new Date(t);
+  const yyyy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function isoToUTCDate(iso: string) {
+  const [y, m, d] = iso.split("-").map((x) => Number(x));
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
 function fmtMoney(n: number) {
   if (Number.isNaN(n)) return "-";
   return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -31,26 +70,23 @@ function fmtRate(n: number | null | undefined) {
 }
 
 function fmtScopeRange(start: string, end: string) {
-  const parse = (s: string) => {
-    const [y, m, d] = s.split("-").map((x) => Number(x));
-    if (!y || !m || !d) return null;
-    const dt = new Date(y, m - 1, d);
-    return Number.isNaN(dt.getTime()) ? null : dt;
-  };
+  const a = isoToUTCDate(start);
+  const b = isoToUTCDate(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return `${start}–${end}`;
 
-  const a = parse(start);
-  const b = parse(end);
-  if (!a || !b) return `${start}–${end}`;
-
-  const sameYear = a.getFullYear() === b.getFullYear();
+  const sameYear =
+    new Intl.DateTimeFormat("en-CA", { timeZone: KARACHI_TZ, year: "numeric" }).format(a) ===
+    new Intl.DateTimeFormat("en-CA", { timeZone: KARACHI_TZ, year: "numeric" }).format(b);
 
   const left = new Intl.DateTimeFormat(undefined, {
+    timeZone: KARACHI_TZ,
     month: "short",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
   }).format(a);
 
   const right = new Intl.DateTimeFormat(undefined, {
+    timeZone: KARACHI_TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -137,12 +173,9 @@ export default function App() {
   const [loans, setLoans] = useState<api.LoanOut[]>([]);
   const [selectedLoanId, setSelectedLoanId] = useState<number>(0);
 
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const defaultScopeEnd = `${yyyy}-${mm}-${dd}`;
-  const defaultScopeStart = `${yyyy}-${mm}-01`;
+  const defaultScopeEnd = karachiTodayISO();
+  const defaultScopeStart = karachiMonthStartISO();
+  const { yyyy } = karachiTodayParts();
 
   const scopeKey = `filters:scope:global`;
   const [scopeStart, setScopeStart] = useState(() => readStoredDateRange(scopeKey)?.start ?? defaultScopeStart);
@@ -306,7 +339,21 @@ export default function App() {
     try {
       exportPendingRef.current = false;
       setExportBackfillStatus(null);
-      await api.downloadReport(selectedBankId, selectedLoanId, scopeStart, scopeEnd);
+
+      const safePart = (v: string) =>
+        (v || "")
+          .trim()
+          .replace(/\s+/g, "_")
+          .replace(/[^A-Za-z0-9._-]+/g, "_")
+          .replace(/_+/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 40) || "unknown";
+
+      const bankName = banks.find((b) => b.id === selectedBankId)?.name || `bank_${selectedBankId}`;
+      const loanName = loans.find((l) => l.id === selectedLoanId)?.name || `loan_${selectedLoanId}`;
+      const filename = `${safePart(bankName)}_${safePart(loanName)}_${scopeStart}_to_${scopeEnd}.xlsx`;
+
+      await api.downloadReport(selectedBankId, selectedLoanId, scopeStart, scopeEnd, filename);
       toast.success("Report downloaded");
     } catch (e: any) {
       if (e?.name === "BackfillRunningError") {
@@ -614,9 +661,7 @@ export default function App() {
                           type="button"
                           className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                           onClick={() => {
-                            const d = new Date();
-                            d.setDate(d.getDate() - 29);
-                            presetRange(toISODate(d), defaultScopeEnd);
+                            presetRange(shiftISODate(defaultScopeEnd, -29), defaultScopeEnd);
                           }}
                         >
                           Last 30 days
@@ -1042,12 +1087,8 @@ function CreateBankCard(props: { onCreated: (b: api.BankOut) => void; onError: (
 }
 
 function Ledger(props: { bankId: number; loanId: number; start: string; end: string; refreshTick: number; onError: (e: string) => void }) {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const defaultEnd = `${yyyy}-${mm}-${dd}`;
-  const defaultStart = `${yyyy}-${mm}-01`;
+  const defaultEnd = karachiTodayISO();
+  const defaultStart = karachiMonthStartISO();
 
   const rangeKey = `filters:ledger:global`;
   const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
@@ -1377,12 +1418,9 @@ function Transactions(props: {
 }) {
   const toast = useToast();
   const confirm = useConfirm();
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const defaultEnd = `${yyyy}-${mm}-${dd}`;
-  const defaultStart = `${yyyy}-${mm}-01`;
+
+  const defaultEnd = karachiTodayISO();
+  const defaultStart = karachiMonthStartISO();
 
   const rangeKey = `filters:tx:global`;
   const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);

@@ -258,7 +258,7 @@ export async function ledger(bankId: number, loanId: number, start: string, end:
   return (await res.json()) as LedgerRow[];
 }
 
-export async function downloadReport(bankId: number, loanId: number, start: string, end: string) {
+export async function downloadReport(bankId: number, loanId: number, start: string, end: string, filename?: string) {
   const token = getToken();
   const qs = new URLSearchParams({ start, end, loan_id: String(loanId) });
 
@@ -285,7 +285,7 @@ export async function downloadReport(bankId: number, loanId: number, start: stri
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `bank_${bankId}_loan_${loanId}_${start}_to_${end}.xlsx`;
+  a.download = filename || `bank_${bankId}_loan_${loanId}_${start}_to_${end}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

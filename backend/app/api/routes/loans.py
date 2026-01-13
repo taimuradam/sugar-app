@@ -10,6 +10,7 @@ from app.models.transaction import Transaction
 from app.schemas.loan import LoanCreate, LoanOut, LoanBalanceOut
 from app.schemas.date_bounds import LoanDateBoundsOut
 from app.services.audit import log_event
+from app.utils.timezone import today_karachi
 
 router = APIRouter(prefix="/banks/{bank_id}/loans", tags=["loans"])
 
@@ -113,7 +114,7 @@ def loan_balance(bank_id: int, loan_id: int, s: Session = Depends(db), u=Depends
     if ln is None:
         raise HTTPException(status_code=404, detail="loan_not_found")
 
-    as_of = date.today()
+    as_of = today_karachi()
     principal = (
         s.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(

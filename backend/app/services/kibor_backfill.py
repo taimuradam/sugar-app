@@ -15,7 +15,7 @@ from app.models.loan import Loan
 from app.models.rate import Rate
 from app.models.transaction import Transaction
 from app.services.kibor import get_kibor_offer_rates, adjust_to_last_business_day
-
+from app.utils.timezone import today_karachi
 
 @dataclass
 class _Status:
@@ -97,7 +97,7 @@ def _compute_missing_days(s: Session, bank_id: int, loan_id: int) -> list[date]:
         return []
 
     earliest = min(principal_dates)
-    today = date.today()
+    today = today_karachi()
 
     anchor_dates: set[date] = set(principal_dates)
 

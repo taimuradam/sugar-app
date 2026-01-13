@@ -1,15 +1,17 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
-from datetime import date
 from io import BytesIO
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+import re
 
 from app.api.deps import db, current_user
+from datetime import date
 from app.models.loan import Loan
 from app.schemas.backfill import BackfillStatusOut
 from app.services.kibor_backfill import is_ready, ensure_started, get_status
 from app.services.reports import build_loan_report
+from app.models.bank import Bank
 
 router = APIRouter(prefix="/banks/{bank_id}/report", tags=["reports"])
 
@@ -24,6 +26,12 @@ def _pick_default_loan_id(s: Session, bank_id: int) -> int:
         raise HTTPException(status_code=404, detail="loan_not_found")
     return ln.id
 
+def _safe_part(v: str) -> str:
+    s = (v or "").strip()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return (s[:40] or "unknown")
 
 @router.get("")
 def report(
@@ -46,7 +54,10 @@ def report(
     build_loan_report(s, bank_id, lid, start, end, buf)
     buf.seek(0)
 
-    filename = f"bank_{bank_id}_loan_{lid}_{start}_to_{end}.xlsx"
+    bank = s.execute(select(Bank).where(Bank.id == bank_id)).scalar_one()
+    loan = s.execute(select(Loan).where(Loan.id == lid, Loan.bank_id == bank_id)).scalar_one()
+
+    filename = f"{_safe_part(bank.name)}_{_safe_part(loan.name)}_{start}_to_{end}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

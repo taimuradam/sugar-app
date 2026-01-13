@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from collections import defaultdict
+from app.utils.timezone import now_karachi
 
 import xlsxwriter
 from sqlalchemy import select
@@ -154,7 +155,7 @@ def build_loan_report(s: Session, bank_id: int, loan_id: int, start: date, end: 
     ws.write(2, 1, f"{start} to {end}", subtle)
 
     ws.write(2, 3, "Generated", meta_label)
-    ws.write(2, 4, datetime.now().strftime("%Y-%m-%d %H:%M"), subtle)
+    ws.write(2, 4, now_karachi().strftime("%Y-%m-%d %H:%M"), subtle)
 
     headers = ["Date", "Principal Balance", "Daily Markup", "Accrued Markup", "Rate %"]
     ws.set_row(3, 18)
