@@ -15,7 +15,7 @@ import {
 import * as api from "./api";
 import { Banner, Button, Card, CardBody, CardHeader, Input, Label, Select, Table, Td, Th, cx, useConfirm, useToast, Progress } from "./ui";
 
-type Tab = "ledger" | "transactions" | "loans" | "report" | "users" | "audit";
+type Tab = "ledger" | "transactions" | "loans" | "users" | "audit";
 
 function fmtMoney(n: number) {
   if (Number.isNaN(n)) return "-";
@@ -176,6 +176,10 @@ export default function App() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [pendingScrollToAddTx, setPendingScrollToAddTx] = useState(false);
 
+  const [exportingReport, setExportingReport] = useState(false);
+  const [exportBackfillStatus, setExportBackfillStatus] = useState<api.BackfillStatus | null>(null);
+  const exportPendingRef = React.useRef(false);
+
   useEffect(() => {
     if (tab !== "transactions") return;
     if (!pendingScrollToAddTx) return;
@@ -287,6 +291,63 @@ export default function App() {
       await refreshLoans(selectedBankId, false);
     }
   }
+
+  const exportBackfillPct =
+    exportBackfillStatus && exportBackfillStatus.status === "running" && exportBackfillStatus.total_days > 0
+      ? Math.min(100, Math.round((exportBackfillStatus.processed_days / exportBackfillStatus.total_days) * 100))
+      : 0;
+
+  async function exportReport() {
+    if (!selectedBankId || !selectedLoanId) return;
+    if (scopeInvalid) return;
+
+    setError("");
+    setExportingReport(true);
+    try {
+      exportPendingRef.current = false;
+      setExportBackfillStatus(null);
+      await api.downloadReport(selectedBankId, selectedLoanId, scopeStart, scopeEnd);
+      toast.success("Report downloaded");
+    } catch (e: any) {
+      if (e?.name === "BackfillRunningError") {
+        exportPendingRef.current = true;
+        setExportBackfillStatus(e.status);
+        toast.info("Preparing report… backfilling KIBOR rates first.");
+      } else {
+        setError(e?.message || "failed_to_download_report");
+      }
+    } finally {
+      setExportingReport(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!exportBackfillStatus || exportBackfillStatus.status !== "running") return;
+
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api.getBackfillStatus(selectedBankId, selectedLoanId);
+        if (cancelled) return;
+        setExportBackfillStatus(st);
+
+        if (st.status !== "running") {
+          window.clearInterval(id);
+          if (!cancelled && exportPendingRef.current && (st.status === "done" || st.status === "idle")) {
+            exportPendingRef.current = false;
+            void exportReport();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [exportBackfillStatus?.status, selectedBankId, selectedLoanId, scopeStart, scopeEnd]);
 
   function toISODate(d: Date) {
     const yyyy = d.getFullYear();
@@ -598,6 +659,22 @@ export default function App() {
                       size="sm"
                       kind="secondary"
                       type="button"
+                      onClick={() => void exportReport()}
+                      disabled={!selectedLoanId || scopeInvalid || exportingReport || exportBackfillStatus?.status === "running"}
+                      title={!selectedLoanId ? "Select a loan to export" : "Download XLSX for the current scope"}
+                    >
+                      <Download className="h-4 w-4" />
+                      {exportBackfillStatus?.status === "running"
+                        ? `Backfilling… ${exportBackfillPct}%`
+                        : exportingReport
+                        ? "Preparing..."
+                        : "Download XLSX"}
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      kind="secondary"
+                      type="button"
                       onClick={refreshScope}
                       disabled={scopeInvalid || scopeHasPending}
                     >
@@ -645,7 +722,6 @@ export default function App() {
             <NavButton active={tab === "ledger"} onClick={() => setTab("ledger")} icon={<LineChart className="h-4 w-4" />} text="Ledger" />
             <NavButton active={tab === "transactions"} onClick={() => setTab("transactions")} icon={<Receipt className="h-4 w-4" />} text="Transactions" />
             <NavButton active={tab === "loans"} onClick={() => setTab("loans")} icon={<ClipboardList className="h-4 w-4" />} text="Loans" />
-            <NavButton active={tab === "report"} onClick={() => setTab("report")} icon={<Download className="h-4 w-4" />} text="Export report" />
             {isAdmin ? <NavButton active={tab === "users"} onClick={() => setTab("users")} icon={<Users className="h-4 w-4" />} text="Users" /> : null}
             {isAdmin ? (
               <NavButton
@@ -843,22 +919,6 @@ export default function App() {
               )
             ) : tab === "loans" ? (
               <LoansTab bankId={selectedBankId} role={role} onError={setError} onLoansChanged={() => refreshLoans(selectedBankId, true)} />
-            ) : tab === "report" ? (
-              !selectedLoanId ? (
-                <Card>
-                  <CardHeader title="Select a loan" subtitle="Exports are generated per-loan." />
-                  <CardBody />
-                </Card>
-              ) : (
-                <Report
-                  bankId={selectedBankId}
-                  loanId={selectedLoanId}
-                  start={scopeStart}
-                  end={scopeEnd}
-                  refreshTick={refreshTick}
-                  onError={setError}
-                />
-              )
             ) : tab === "users" ? (
               <UsersTab role={role} onError={setError} />
             ) : (
@@ -1731,80 +1791,6 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
           </CardBody>
         </Card>
       ) : null}
-    </div>
-  );
-}
-
-function Report(props: { bankId: number; loanId: number; start: string; end: string; refreshTick: number; onError: (e: string) => void }) {
-  const [loading, setLoading] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  useEffect(() => {
-    if (!backfillStatus || backfillStatus.status !== "running") return;
-
-    let cancelled = false;
-    const id = window.setInterval(async () => {
-      try {
-        const st = await api.getBackfillStatus(props.bankId, props.loanId);
-        if (cancelled) return;
-        setBackfillStatus(st);
-
-        if (st.status !== "running") {
-          window.clearInterval(id);
-        }
-      } catch {
-        // ignore
-      }
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [backfillStatus, props.bankId, props.loanId]);
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-900">Download Excel report</div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div>
-            <Label>Start</Label>
-            <Input type="date" value={props.start} disabled />
-          </div>
-          <div>
-            <Label>End</Label>
-            <Input type="date" value={props.end} disabled />
-          </div>
-          <div className="flex items-end">
-            <Button
-              onClick={async () => {
-                props.onError("");
-                setLoading(true);
-                try {
-                  setBackfillStatus(null);
-                  await api.downloadReport(props.bankId, props.loanId, props.start, props.end);
-                } catch (e: any) {
-                  if (e?.name === "BackfillRunningError") {
-                    setBackfillStatus(e.status);
-                  } else {
-                    props.onError(e?.message || "failed_to_download_report");
-                  }
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
-              <Download className="h-4 w-4" />
-              {loading ? "Preparing..." : "Download"}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="text-sm text-slate-600">
-        Downloads the XLSX.
-      </div>
     </div>
   );
 }
