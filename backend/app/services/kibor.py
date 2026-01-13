@@ -31,9 +31,17 @@ class KiborRates:
     offer_1m: float
     offer_3m: float
     offer_6m: float
+    offer_9m: float
+    offer_12m: float  # 1 year
 
     def by_tenor_months(self) -> dict[int, float]:
-        return {1: self.offer_1m, 3: self.offer_3m, 6: self.offer_6m}
+        return {
+            1: self.offer_1m,
+            3: self.offer_3m,
+            6: self.offer_6m,
+            9: self.offer_9m,
+            12: self.offer_12m,
+        }
 
 
 def adjust_to_last_business_day(d: date) -> date:
@@ -81,8 +89,9 @@ _TENOR_PATTERNS: dict[int, re.Pattern[str]] = {
     1: re.compile(r"\b1\s*[-–]?\s*month\b", re.IGNORECASE),
     3: re.compile(r"\b3\s*[-–]?\s*month\b", re.IGNORECASE),
     6: re.compile(r"\b6\s*[-–]?\s*month\b", re.IGNORECASE),
+    9: re.compile(r"\b9\s*[-–]?\s*month(s)?\b", re.IGNORECASE),
+    12: re.compile(r"\b(12\s*[-–]?\s*month(s)?|1\s*[-–]?\s*year)\b", re.IGNORECASE),
 }
-
 
 def _extract_offer_rate_for_tenor(text: str, tenor_months: int) -> float | None:
     pat = _TENOR_PATTERNS[tenor_months]
@@ -95,21 +104,30 @@ def _extract_offer_rate_for_tenor(text: str, tenor_months: int) -> float | None:
     return None
 
 
-def parse_kibor_offer_rates(pdf_bytes: bytes) -> tuple[float, float, float]:
+def parse_kibor_offer_rates(pdf_bytes: bytes) -> tuple[float, float, float, float, float]:
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         text = "\n".join((p.extract_text() or "") for p in pdf.pages)
 
     o1 = _extract_offer_rate_for_tenor(text, 1)
     o3 = _extract_offer_rate_for_tenor(text, 3)
     o6 = _extract_offer_rate_for_tenor(text, 6)
+    o9 = _extract_offer_rate_for_tenor(text, 9)
+    o12 = _extract_offer_rate_for_tenor(text, 12)
 
-    if o1 is None or o3 is None or o6 is None:
+    if o1 is None or o3 is None or o6 is None or o9 is None or o12 is None:
         raise RuntimeError("kibor_parse_failed")
 
-    return (o1, o3, o6)
+    return (o1, o3, o6, o9, o12)
 
 
 def get_kibor_offer_rates(d: date) -> KiborRates:
     pdf_bytes, resolved_date = fetch_kibor_pdf_bytes(d)
-    o1, o3, o6 = parse_kibor_offer_rates(pdf_bytes)
-    return KiborRates(effective_date=resolved_date, offer_1m=o1, offer_3m=o3, offer_6m=o6)
+    o1, o3, o6, o9, o12 = parse_kibor_offer_rates(pdf_bytes)
+    return KiborRates(
+        effective_date=resolved_date,
+        offer_1m=o1,
+        offer_3m=o3,
+        offer_6m=o6,
+        offer_9m=o9,
+        offer_12m=o12,
+    )

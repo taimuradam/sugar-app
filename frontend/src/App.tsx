@@ -802,7 +802,7 @@ export default function App() {
 
                           <div className="flex justify-between">
                             <div className="text-slate-600">KIBOR tenor</div>
-                            <div className="font-mono">{selectedLoan.kibor_tenor_months}m</div>
+                            <div className="font-mono">{selectedLoan.kibor_tenor_months === 12 ? "1y" : `${selectedLoan.kibor_tenor_months}m`}</div>
                           </div>
 
                           <div className="flex justify-between">
@@ -1620,7 +1620,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
   const confirm = useConfirm();
 
   const [name, setName] = useState("");
-  const [tenor, setTenor] = useState<"1" | "3" | "6">("1");
+  const [tenor, setTenor] = useState<"1" | "3" | "6" | "9" | "12">("1");
   const [additionalRate, setAdditionalRate] = useState<string>("0");
   const [maxLoanAmount, setMaxLoanAmount] = useState<string>("");
   const [placeholderRate, setKIBORRate] = useState<string>("0");
@@ -1719,7 +1719,7 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                         )}
                       >
                         <Td className="font-medium">{l.name}</Td>
-                        <Td className="text-right font-mono">{l.kibor_tenor_months}m</Td>
+                        <Td className="text-right font-mono">{l.kibor_tenor_months === 12 ? "1y" : `${l.kibor_tenor_months}m`}</Td>
                         <Td className="text-right font-mono">{fmtRate(l.additional_rate ?? 0)}%</Td>
                         <Td className="text-right font-mono">{l.max_loan_amount == null ? "—" : fmtMoney(l.max_loan_amount)}</Td>
                         {isAdmin ? (
@@ -1766,6 +1766,8 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
                       <option value="1">1 month</option>
                       <option value="3">3 months</option>
                       <option value="6">6 months</option>
+                      <option value="9">9 months</option>
+                      <option value="12">1 year</option>
                     </Select>
                   </div>
 

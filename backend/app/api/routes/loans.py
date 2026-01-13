@@ -34,7 +34,7 @@ def create_loan(bank_id: int, body: LoanCreate, s: Session = Depends(db), u=Depe
     nm = body.name.strip()
     if not nm:
         raise HTTPException(status_code=400, detail="loan_name_required")
-    if body.kibor_tenor_months not in (1, 3, 6):
+    if body.kibor_tenor_months not in (1, 3, 6, 9, 12):
         raise HTTPException(status_code=400, detail="kibor_tenor_invalid")
 
     exists = s.execute(select(Loan).where(Loan.bank_id == bank_id, Loan.name == nm)).scalar_one_or_none()

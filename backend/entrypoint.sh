@@ -1,13 +1,14 @@
 #!/bin/sh
 set -e
 
+echo "Waiting for database..."
 python - <<'PY'
 import os, time
 from sqlalchemy import create_engine, text
 
-url = os.getenv('DATABASE_URL')
+url = os.getenv("DATABASE_URL")
 if not url:
-    raise SystemExit('DATABASE_URL is not set')
+    raise SystemExit("DATABASE_URL is not set")
 
 engine = create_engine(url, pool_pre_ping=True)
 deadline = time.time() + 60
@@ -16,15 +17,13 @@ last_err = None
 while time.time() < deadline:
     try:
         with engine.connect() as conn:
-            conn.execute(text('SELECT 1'))
-        break
+            conn.execute(text("SELECT 1"))
+        raise SystemExit(0)
     except Exception as e:
         last_err = e
         time.sleep(1)
-else:
-    raise SystemExit(f'Database not ready after 60s: {last_err!r}')
 
-print('Database is ready')
+raise SystemExit(f"Database not ready after 60s: {last_err}")
 PY
 
 if [ "${AUTO_MIGRATE:-1}" = "1" ]; then

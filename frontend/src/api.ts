@@ -13,7 +13,7 @@ export type LoanOut = {
   id: number;
   bank_id: number;
   name: string;
-  kibor_tenor_months: 1 | 3 | 6;
+  kibor_tenor_months: 1 | 3 | 6 | 9 | 12;
   additional_rate: number | null;
   kibor_placeholder_rate_percent: number;
   max_loan_amount: number | null;
@@ -189,7 +189,7 @@ export async function createLoan(
   bankId: number,
   body: {
     name: string;
-    kibor_tenor_months: 1 | 3 | 6;
+    kibor_tenor_months: 1 | 3 | 6 | 9 | 12;
     additional_rate?: number | null;
     kibor_placeholder_rate_percent: number;
     max_loan_amount?: number | null;

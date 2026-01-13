@@ -9,19 +9,36 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d finance"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/finance
       JWT_SECRET: devsecret
-      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      CORS_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173"
+      AUTO_MIGRATE: "1"
+      AUTO_SEED_ADMIN: "1"
+      SEED_ADMIN_USER: "admin"
+      SEED_ADMIN_PASS: "admin"
     ports:
       - "8000:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+
+    # IMPORTANT: don't mount ./backend:/app (it can break /app/entrypoint.sh)
+    # Mount only what you actually want to live-edit:
     volumes:
-      - ./backend:/app
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+
+    # Optional: keep reload for dev testing
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
