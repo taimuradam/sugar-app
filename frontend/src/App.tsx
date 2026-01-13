@@ -30,6 +30,35 @@ function fmtRate(n: number | null | undefined) {
   }).format(n);
 }
 
+function fmtScopeRange(start: string, end: string) {
+  const parse = (s: string) => {
+    const [y, m, d] = s.split("-").map((x) => Number(x));
+    if (!y || !m || !d) return null;
+    const dt = new Date(y, m - 1, d);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  };
+
+  const a = parse(start);
+  const b = parse(end);
+  if (!a || !b) return `${start}–${end}`;
+
+  const sameYear = a.getFullYear() === b.getFullYear();
+
+  const left = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  }).format(a);
+
+  const right = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(b);
+
+  return `${left}–${right}`;
+}
+
 function readStoredDateRange(key: string): { start: string; end: string } | null {
   try {
     const raw = localStorage.getItem(key);
@@ -66,14 +95,32 @@ function writeStoredDate(key: string, value: string) {
   } catch {}
 }
 
-function BankTypeBadge({ bankType }: { bankType: string | undefined | null }) {
+function BankTypeBadge({
+  bankType,
+  size = "md",
+  className,
+}: {
+  bankType: string | undefined | null;
+  size?: "sm" | "md";
+  className?: string;
+}) {
   const t = (bankType || "").trim().toLowerCase();
   const label = t === "islamic" ? "Islamic" : "Conventional";
 
+  const sizeCls = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
+
   const cls =
     t === "islamic"
-      ? "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"
-      : "inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700";
+      ? cx(
+          "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 font-semibold text-emerald-700",
+          sizeCls,
+          className
+        )
+      : cx(
+          "inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 font-semibold text-indigo-700",
+          sizeCls,
+          className
+        );
 
   return <span className={cls}>{label}</span>;
 }
@@ -89,6 +136,34 @@ export default function App() {
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
   const [loans, setLoans] = useState<api.LoanOut[]>([]);
   const [selectedLoanId, setSelectedLoanId] = useState<number>(0);
+
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  const defaultScopeEnd = `${yyyy}-${mm}-${dd}`;
+  const defaultScopeStart = `${yyyy}-${mm}-01`;
+
+  const scopeKey = `filters:scope:global`;
+  const [scopeStart, setScopeStart] = useState(() => readStoredDateRange(scopeKey)?.start ?? defaultScopeStart);
+  const [scopeEnd, setScopeEnd] = useState(() => readStoredDateRange(scopeKey)?.end ?? defaultScopeEnd);
+
+  useEffect(() => {
+    writeStoredDateRange(scopeKey, scopeStart, scopeEnd);
+  }, [scopeKey, scopeStart, scopeEnd]);
+
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [pendingScrollToAddTx, setPendingScrollToAddTx] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "transactions") return;
+    if (!pendingScrollToAddTx) return;
+    setPendingScrollToAddTx(false);
+    requestAnimationFrame(() => {
+      document.getElementById("add-transaction")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [tab, pendingScrollToAddTx]);
+
   const [transactionsVersion, setTransactionsVersion] = useState(0);
   const bumpTransactionsVersion = () => setTransactionsVersion((v) => v + 1);
   const [loadingLoans, setLoadingLoans] = useState(false);
@@ -158,6 +233,14 @@ export default function App() {
       setSelectedLoanId(0);
     } finally {
       setLoadingLoans(false);
+    }
+  }
+
+  async function refreshScope() {
+    setRefreshTick((t) => t + 1);
+    if (selectedBankId) {
+      await refreshBanks(false);
+      await refreshLoans(selectedBankId, false);
     }
   }
 
@@ -253,99 +336,163 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-4 py-10">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-3">
-              <Building2 className="h-5 w-5 text-slate-700" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-900">Finance dashboard</div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="w-[320px]">
-              <Label>Bank</Label>
-              <Select
-                value={selectedBankId ? String(selectedBankId) : ""}
-                onChange={(e) => setSelectedBankId(Number(e.target.value))}
-                disabled={loadingBanks || !banks.length}
-              >
-                {!banks.length ? <option value="">No banks</option> : null}
-                {banks.map((b) => (
-                  <option key={b.id} value={String(b.id)}>
-                    {b.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="w-[320px]">
-              <Label>Loan</Label>
-              <Select
-                value={selectedLoanId ? String(selectedLoanId) : ""}
-                onChange={(e) => setSelectedLoanId(Number(e.target.value))}
-                disabled={loadingLoans || !loans.length || !selectedBankId}
-              >
-                {!selectedBankId ? <option value="">Select a bank first</option> : null}
-                {selectedBankId && !loans.length ? <option value="">No loans</option> : null}
-                {loans.map((l) => (
-                  <option key={l.id} value={String(l.id)}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="relative" ref={userMenuRef}>
-              <button
-                type="button"
-                onClick={() => setUserMenuOpen((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-haspopup="menu"
-                aria-expanded={userMenuOpen}
-              >
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-900 text-white">
-                  <User className="h-4 w-4" />
-                </span>
-                <div className="flex flex-col items-start leading-tight">
-                  <span className="text-xs text-slate-500">Signed in as</span>
-                  <span className="font-mono text-xs">{role === "user" ? "viewer" : role}</span>
+      <div className="top-0 z-40 border-b border-slate-200/70 bg-slate-50/80 backdrop-blur supports-[backdrop-filter]:bg-slate-50/70">
+        <div className="mx-auto max-w-6xl px-4 py-3">
+          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/40">
+            <div className="px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3_toggle">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                    <Building2 className="h-5 w-5 text-slate-700" />
+                  </div>
+                  <div className="leading-tight">
+                    <div className="text-sm font-semibold text-slate-900">Finance dashboard</div>
+                  </div>
                 </div>
-                <ChevronDown className={cx("h-4 w-4 text-slate-500 transition", userMenuOpen && "rotate-180")} />
-              </button>
 
-              {userMenuOpen ? (
-                <div
-                  role="menu"
-                  className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60"
-                >
-                  <div className="px-4 py-3">
-                    <div className="text-xs font-semibold text-slate-900">Account</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      Role: <span className="font-mono">{role === "user" ? "viewer" : role}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button size="sm" kind="secondary" onClick={refreshScope}>
+                    Refresh
+                  </Button>
+
+                  <div className="relative" ref={userMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setUserMenuOpen((v) => !v)}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-haspopup="menu"
+                      aria-expanded={userMenuOpen}
+                    >
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                        <User className="h-4 w-4" />
+                      </span>
+                      <div className="flex flex-col items-start leading-tight">
+                        <span className="font-mono text-xs">{role === "user" ? "viewer" : role}</span>
+                      </div>
+                      <ChevronDown className={cx("h-4 w-4 text-slate-500 transition", userMenuOpen && "rotate-180")} />
+                    </button>
+
+                    {userMenuOpen ? (
+                      <div
+                        role="menu"
+                        className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60"
+                      >
+                        <div className="px-4 py-3">
+                          <div className="text-xs font-semibold text-slate-900">Account</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            Role: <span className="font-mono">{role === "user" ? "viewer" : role}</span>
+                          </div>
+                        </div>
+                        <div className="h-px bg-slate-100" />
+                        <button
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                          onClick={() => {
+                            setUserMenuOpen(false);
+                            api.clearToken();
+                            setTokenReady(false);
+                            setRole("");
+                          }}
+                        >
+                          <LogOut className="h-4 w-4" />
+                          Logout
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between">
+                      <Label className="mb-0">Bank</Label>
+                    </div>
+                    <Select
+                      value={selectedBankId ? String(selectedBankId) : ""}
+                      onChange={(e) => setSelectedBankId(Number(e.target.value))}
+                      disabled={loadingBanks || !banks.length}
+                    >
+                      {!banks.length ? <option value="">No banks</option> : null}
+                      {banks.map((b) => (
+                        <option key={b.id} value={String(b.id)}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <Label className="mb-0">Loan</Label>
+                    <Select
+                      value={selectedLoanId ? String(selectedLoanId) : ""}
+                      onChange={(e) => setSelectedLoanId(Number(e.target.value))}
+                      disabled={loadingLoans || !loans.length || !selectedBankId}
+                    >
+                      {!selectedBankId ? <option value="">Select a bank first</option> : null}
+                      {selectedBankId && !loans.length ? <option value="">No loans</option> : null}
+                      {loans.map((l) => (
+                        <option key={l.id} value={String(l.id)}>
+                          {l.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <Label className="mb-0">Date range</Label>
+                    <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+                      <Input
+                        className="tabular-nums"
+                        type="date"
+                        value={scopeStart}
+                        onChange={(e) => setScopeStart(e.target.value)}
+                      />
+
+                      <div className="hidden select-none items-center justify-center text-xs text-slate-400 sm:flex">→</div>
+
+                      <Input
+                        className="tabular-nums"
+                        type="date"
+                        value={scopeEnd}
+                        onChange={(e) => setScopeEnd(e.target.value)}
+                      />
                     </div>
                   </div>
-                  <div className="h-px bg-slate-100" />
-                  <button
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"
-                    onClick={() => {
-                      setUserMenuOpen(false);
-                      api.clearToken();
-                      setTokenReady(false);
-                      setRole("");
-                    }}
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Logout
-                  </button>
                 </div>
-              ) : null}
+              </div>
+
+              <div
+                className="mt-3 flex min-w-0 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700"
+                title={
+                  selectedBank && selectedLoan
+                    ? `Viewing: ${selectedBank.name} (${selectedBank.bank_type}) → Loan: ${selectedLoan.name} → ${fmtScopeRange(scopeStart, scopeEnd)}`
+                    : "Viewing: —"
+                }
+              >
+                <span className="text-slate-500">Viewing:</span>
+                {selectedBank && selectedLoan ? (
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold text-slate-900">{selectedBank.name}</span>
+                    <span className="ml-2 inline-flex align-middle">
+                      <BankTypeBadge bankType={selectedBank.bank_type} size="sm" />
+                    </span>
+                    <span className="text-slate-400"> → </span>
+                    <span className="font-semibold text-slate-900">Loan: {selectedLoan.name}</span>
+                    <span className="text-slate-400"> → </span>
+                    <span className="font-semibold text-slate-900">{fmtScopeRange(scopeStart, scopeEnd)}</span>
+                  </span>
+                ) : (
+                  <span className="text-slate-500">—</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mx-auto max-w-6xl px-4 py-6">
 
         <div className="mt-6">{error ? <Banner kind="error" text={error} onClose={() => setError("")} /> : null}</div>
 
@@ -519,7 +666,14 @@ export default function App() {
                   <CardBody />
                 </Card>
               ) : (
-                <Ledger bankId={selectedBankId} loanId={selectedLoanId} onError={setError} />
+                <Ledger
+                  bankId={selectedBankId}
+                  loanId={selectedLoanId}
+                  start={scopeStart}
+                  end={scopeEnd}
+                  refreshTick={refreshTick}
+                  onError={setError}
+                />
               )
             ) : tab === "transactions" ? (
               !selectedLoanId ? (
@@ -531,10 +685,14 @@ export default function App() {
                 <Transactions
                   bankId={selectedBankId}
                   loanId={selectedLoanId}
+                  start={scopeStart}
+                  end={scopeEnd}
+                  refreshTick={refreshTick}
                   role={role}
                   onError={setError}
                   onTransactionsChanged={async () => {
                     await refreshBanks(false);
+                    await refreshLoans(selectedBankId, false);
                     bumpTransactionsVersion();
                   }}
                 />
@@ -548,7 +706,14 @@ export default function App() {
                   <CardBody />
                 </Card>
               ) : (
-                <Report bankId={selectedBankId} loanId={selectedLoanId} onError={setError} />
+                <Report
+                  bankId={selectedBankId}
+                  loanId={selectedLoanId}
+                  start={scopeStart}
+                  end={scopeEnd}
+                  refreshTick={refreshTick}
+                  onError={setError}
+                />
               )
             ) : tab === "users" ? (
               <UsersTab role={role} onError={setError} />
@@ -583,12 +748,6 @@ function LoginCard(props: { error: string; onError: (e: string) => void; onLogin
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("admin");
   const [loading, setLoading] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
 
   return (
     <Card className="self-center">
@@ -678,7 +837,7 @@ function CreateBankCard(props: { onCreated: (b: api.BankOut) => void; onError: (
   );
 }
 
-function Ledger(props: { bankId: number; loanId: number; onError: (e: string) => void }) {
+function Ledger(props: { bankId: number; loanId: number; start: string; end: string; refreshTick: number; onError: (e: string) => void }) {
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -774,7 +933,7 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
     setLoading(true);
     try {
       setBackfillStatus(null);
-      const out = await api.ledger(props.bankId, props.loanId, start, end);
+      const out = await api.ledger(props.bankId, props.loanId, props.start, props.end);
       setRows(out);
     } catch (e: any) {
       if (e?.name === "BackfillRunningError") {
@@ -789,13 +948,13 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
   }
 
   useEffect(() => {
-    if (!props.loanId) {
+    if (!props.bankId || !props.loanId) {
       setRows([]);
       setBackfillStatus(null);
       return;
     }
     refresh();
-  }, [props.loanId]);
+  }, [props.bankId, props.loanId, props.start, props.end, props.refreshTick]);
 
   useEffect(() => {
     if (!backfillStatus || backfillStatus.status !== "running") return;
@@ -842,20 +1001,6 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <Label>Start</Label>
-          <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </div>
-        <div>
-          <Label>End</Label>
-          <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </div>
-        <Button onClick={refresh} kind="secondary">
-          {loading ? "Loading..." : "Refresh"}
-        </Button>
-      </div>
-
       {backfillStatus && backfillStatus.status === "running" ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex items-center justify-between gap-3">
@@ -878,9 +1023,6 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
       <div className="rounded-2xl border border-slate-200 bg-white p-3">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-semibold text-slate-900">Summary</div>
-          <div className="text-xs text-slate-500 tabular-nums">
-            {start} → {end}
-          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
@@ -1022,6 +1164,9 @@ function Ledger(props: { bankId: number; loanId: number; onError: (e: string) =>
 function Transactions(props: {
   bankId: number;
   loanId: number;
+  start: string;
+  end: string;
+  refreshTick: number;
   role: string;
   onError: (e: string) => void;
   onTransactionsChanged?: () => void;
@@ -1049,14 +1194,13 @@ function Transactions(props: {
     writeStoredDateRange(rangeKey, start, end);
   }, [rangeKey, start, end]);
 
+  useEffect(() => {
+    refresh();
+  }, [props.bankId, props.loanId, props.start, props.end, props.refreshTick]);
+
   const [rows, setRows] = useState<api.TxOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
 
 
   const addDateKey = `filters:txAddDate:global`;
@@ -1082,7 +1226,7 @@ function Transactions(props: {
     props.onError("");
     setLoading(true);
     try {
-      const out = await api.listTxs(props.bankId, props.loanId, start, end);
+      const out = await api.listTxs(props.bankId, props.loanId, props.start, props.end);
       setRows(out);
     } catch (e: any) {
       props.onError(e?.message || "failed_to_load_transactions");
@@ -1125,22 +1269,8 @@ function Transactions(props: {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <Label>Filter start</Label>
-          <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </div>
-        <div>
-          <Label>Filter end</Label>
-          <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </div>
-        <Button kind="secondary" onClick={refresh}>
-          {loading ? "Loading..." : "Apply"}
-        </Button>
-      </div>
-
       {isAdmin ? (
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div id="add-transaction" className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Add transaction</div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <div>
@@ -1364,12 +1494,6 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
             <div className="text-sm text-slate-600">Select a bank first.</div>
           ) : (
             <>
-              <div className="flex items-center justify-between gap-3">
-                <Button kind="secondary" onClick={refresh} disabled={loading}>
-                  {loading ? "Loading..." : "Refresh"}
-                </Button>
-              </div>
-
               <div className="mt-4 overflow-x-auto">
                 <Table className="tabular-nums">
                   <thead>
@@ -1467,59 +1591,33 @@ function LoansTab(props: { bankId: number; role: string; onError: (e: string) =>
   );
 }
 
-function Report(props: { bankId: number; loanId: number; onError: (e: string) => void }) {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const defaultEnd = `${yyyy}-${mm}-${dd}`;
-  const defaultStart = `${yyyy}-${mm}-01`;
-
-  const rangeKey = `filters:report:global`;
-  const [start, setStart] = useState(() => readStoredDateRange(rangeKey)?.start ?? defaultStart);
-  const [end, setEnd] = useState(() => readStoredDateRange(rangeKey)?.end ?? defaultEnd);
-
-  useEffect(() => {
-    const st = readStoredDateRange(rangeKey);
-    setStart(st?.start ?? defaultStart);
-    setEnd(st?.end ?? defaultEnd);
-  }, [rangeKey]);
-
-  useEffect(() => {
-    writeStoredDateRange(rangeKey, start, end);
-  }, [rangeKey, start, end]);
-
+function Report(props: { bankId: number; loanId: number; start: string; end: string; refreshTick: number; onError: (e: string) => void }) {
   const [loading, setLoading] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
 
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
+  useEffect(() => {
+    if (!backfillStatus || backfillStatus.status !== "running") return;
 
-        useEffect(() => {
-          if (!backfillStatus || backfillStatus.status !== "running") return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api.getBackfillStatus(props.bankId, props.loanId);
+        if (cancelled) return;
+        setBackfillStatus(st);
 
-          let cancelled = false;
-          const id = window.setInterval(async () => {
-            try {
-              const st = await api.getBackfillStatus(props.bankId, props.loanId);
-              if (cancelled) return;
-              setBackfillStatus(st);
+        if (st.status !== "running") {
+          window.clearInterval(id);
+        }
+      } catch {
+        // ignore
+      }
+    }, 1000);
 
-              if (st.status !== "running") {
-                window.clearInterval(id);
-              }
-            } catch {
-              // ignore
-            }
-          }, 1000);
-
-          return () => {
-            cancelled = true;
-            window.clearInterval(id);
-          };
-        }, [backfillStatus, props.bankId, props.loanId]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [backfillStatus, props.bankId, props.loanId]);
 
   return (
     <div className="space-y-5">
@@ -1528,11 +1626,11 @@ function Report(props: { bankId: number; loanId: number; onError: (e: string) =>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <Label>Start</Label>
-            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+            <Input type="date" value={props.start} disabled />
           </div>
           <div>
             <Label>End</Label>
-            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+            <Input type="date" value={props.end} disabled />
           </div>
           <div className="flex items-end">
             <Button
@@ -1541,7 +1639,7 @@ function Report(props: { bankId: number; loanId: number; onError: (e: string) =>
                 setLoading(true);
                 try {
                   setBackfillStatus(null);
-                  await api.downloadReport(props.bankId, props.loanId, start, end);
+                  await api.downloadReport(props.bankId, props.loanId, props.start, props.end);
                 } catch (e: any) {
                   if (e?.name === "BackfillRunningError") {
                     setBackfillStatus(e.status);
@@ -1573,13 +1671,6 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
   const isAdmin = props.role === "admin";
   const [rows, setRows] = useState<api.UserOut[]>([]);
   const [loading, setLoading] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
-
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1655,10 +1746,6 @@ function UsersTab(props: { role: string; onError: (e: string) => void }) {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 text-sm font-semibold text-slate-900">Users</div>
-        <Button kind="secondary" onClick={refresh}>
-          {loading ? "Loading..." : "Refresh"}
-        </Button>
-
         <div className="mt-3">
           <Table className="tabular-nums">
             <thead>
@@ -1729,13 +1816,6 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
 
   const [rows, setRows] = useState<api.AuditOut[]>([]);
   const [loading, setLoading] = useState(false);
-  const [backfillStatus, setBackfillStatus] = useState<api.BackfillStatus | null>(null);
-
-  const backfillPct =
-    backfillStatus && backfillStatus.status === "running" && backfillStatus.total_days > 0
-      ? Math.min(100, Math.round((backfillStatus.processed_days / backfillStatus.total_days) * 100))
-      : 0;
-
 
   const [username, setUsername] = useState("");
   const [entityType, setEntityType] = useState("");
@@ -1835,9 +1915,6 @@ function AuditLogTab(props: { role: string; onError: (msg: string) => void }) {
         </div>
 
         <div className="mt-3 flex items-center gap-2">
-          <Button kind="secondary" onClick={load} disabled={loading}>
-            {loading ? "Loading..." : "Refresh"}
-          </Button>
           <div className="text-xs text-slate-500">Showing newest first. Use filters to narrow results.</div>
         </div>
 
