@@ -12,6 +12,7 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+    restart: unless-stopped
 
   backend:
     build: ./backend
@@ -21,12 +22,12 @@ services:
       CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
       AUTO_MIGRATE: "1"
       AUTO_SEED_ADMIN: "1"
-      SEED_ADMIN_USER: "admin"
-      SEED_ADMIN_PASS: "admin"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
+    restart: unless-stopped
 
   web:
     build:
@@ -38,6 +39,7 @@ services:
       - backend
     ports:
       - "8080:80"
+    restart: unless-stopped
 
 volumes:
   pgdata:

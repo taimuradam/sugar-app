@@ -1,22 +1,40 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
+
+set PROJECT=sugarapp
 cd /d "%~dp0\.."
 
+where docker >NUL 2>NUL
+if %ERRORLEVEL% NEQ 0 (
+  echo Docker CLI not found. Please install Docker Desktop.
+  pause
+  exit /b 1
+)
+
+docker info >NUL 2>NUL
+if %ERRORLEVEL% NEQ 0 (
+  echo Docker engine is not running. Open Docker Desktop and try again.
+  pause
+  exit /b 1
+)
+
 echo Updating Sugar App (local)...
-docker compose -f docker-compose.local.yml up -d --build
+docker compose -p %PROJECT% -f docker-compose.local.yml pull >NUL 2>NUL
+
+docker compose -p %PROJECT% -f docker-compose.local.yml up -d --build
 if errorlevel 1 (
   echo.
-  echo ERROR: Docker failed. Make sure Docker Desktop is running.
+  echo ERROR: Docker failed during update.
   pause
   exit /b 1
 )
 
 echo Running database migrations...
-docker compose -f docker-compose.local.yml exec -T backend alembic upgrade head
+docker compose -p %PROJECT% -f docker-compose.local.yml exec -T backend alembic upgrade head
 if errorlevel 1 (
   echo.
   echo ERROR: Migration failed.
-  echo Data is still safe in the Docker volume (sugar-app_pgdata).
+  echo Your data is still safe in the Docker volume.
   pause
   exit /b 1
 )
