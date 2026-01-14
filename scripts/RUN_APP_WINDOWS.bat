@@ -36,7 +36,7 @@ if errorlevel 1 (
 echo Waiting for the app to become ready (via /api/health)...
 set READY=0
 for /l %%i in (1,1,120) do (
-  powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/health -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+  powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8081/api/health -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
   if !ERRORLEVEL! EQU 0 (
     set READY=1
     goto ready
