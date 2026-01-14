@@ -19,7 +19,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/finance
       JWT_SECRET: devsecret
-      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      CORS_ORIGINS: http://localhost:8081,http://127.0.0.1:8081
       AUTO_MIGRATE: "1"
       AUTO_SEED_ADMIN: "1"
     depends_on:
@@ -47,5 +47,5 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "8081:80"
     restart: unless-stopped
