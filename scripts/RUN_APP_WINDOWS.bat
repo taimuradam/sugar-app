@@ -54,5 +54,5 @@ if "%READY%" NEQ "1" (
   exit /b 1
 )
 
-start "" "http://localhost:8080"
+start "" "http://localhost:8081"
 echo Done.
