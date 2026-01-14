@@ -161,6 +161,26 @@ function BankTypeBadge({
   return <span className={cls}>{label}</span>;
 }
 
+function Pill(props: { kind?: "neutral" | "info" | "warning" | "danger"; title?: string; children: React.ReactNode }) {
+  const kind = props.kind ?? "neutral";
+  const cls =
+    kind === "danger"
+      ? "border-rose-200 bg-rose-50 text-rose-800"
+      : kind === "warning"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : kind === "info"
+      ? "border-sky-200 bg-sky-50 text-sky-900"
+      : "border-slate-200 bg-slate-50 text-slate-700";
+  return (
+    <span
+      title={props.title}
+      className={cx("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold", cls)}
+    >
+      {props.children}
+    </span>
+  );
+}
+
 export default function App() {
   const [role, setRole] = useState(() => api.getRole());
   const [error, setError] = useState<string>("");
@@ -172,6 +192,11 @@ export default function App() {
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
   const [loans, setLoans] = useState<api.LoanOut[]>([]);
   const [selectedLoanId, setSelectedLoanId] = useState<number>(0);
+
+  const [ratesByBank, setRatesByBank] = useState<Record<number, api.RateOut[]>>({});
+  const [ratesLoadError, setRatesLoadError] = useState<string>("");
+
+  const [scopeBackfillStatus, setScopeBackfillStatus] = useState<api.BackfillStatus | null>(null);
 
   const defaultScopeEnd = karachiTodayISO();
   const defaultScopeStart = karachiMonthStartISO();
@@ -441,12 +466,63 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenReady, selectedBankId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRates() {
+      if (!tokenReady || !selectedBankId) return;
+      setRatesLoadError("");
+      try {
+        const rs = await api.listRates(selectedBankId);
+        if (cancelled) return;
+        setRatesByBank((prev) => ({ ...prev, [selectedBankId]: rs }));
+      } catch {
+        if (cancelled) return;
+        setRatesLoadError("Failed to load KIBOR rates.");
+      }
+    }
+
+    void loadRates();
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenReady, selectedBankId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let id: number | null = null;
+
+    async function tick() {
+      if (!tokenReady || !selectedBankId || !selectedLoanId) {
+        setScopeBackfillStatus(null);
+        return;
+      }
+      try {
+        const st = await api.getBackfillStatus(selectedBankId, selectedLoanId);
+        if (cancelled) return;
+        setScopeBackfillStatus(st);
+      } catch {
+        if (cancelled) return;
+        setScopeBackfillStatus(null);
+      }
+    }
+
+    void tick();
+    if (tokenReady && selectedBankId && selectedLoanId) {
+      id = window.setInterval(tick, 5000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (id) window.clearInterval(id);
+    };
+  }, [tokenReady, selectedBankId, selectedLoanId]);
+
   const selectedBank = useMemo(() => banks.find((b) => b.id === selectedBankId) || null, [banks, selectedBankId]);
   const selectedLoan = useMemo(() => loans.find((l) => l.id === selectedLoanId) || null, [loans, selectedLoanId]);
 
     const [loanUsedPrincipal, setLoanUsedPrincipal] = useState<number | null>(null);
     const [loanUsedLoading, setLoanUsedLoading] = useState(false);
-    const [loanUsedBackfillRunning, setLoanUsedBackfillRunning] = useState(false);
 
     useEffect(() => {
       let cancelled = false;
@@ -454,12 +530,10 @@ export default function App() {
       async function loadUsedPrincipal() {
         if (!tokenReady || !selectedBankId || !selectedLoanId) {
           setLoanUsedPrincipal(null);
-          setLoanUsedBackfillRunning(false);
           return;
         }
 
         setLoanUsedLoading(true);
-        setLoanUsedBackfillRunning(false);
 
         try {
           const bal = await api.loanBalance(selectedBankId, selectedLoanId);
@@ -485,6 +559,77 @@ export default function App() {
       loanLimit != null && loanUsedPrincipal != null && loanLimit > 0
         ? Math.min(100, Math.round((loanUsedPrincipal / loanLimit) * 100))
         : 0;
+
+
+    const utilAlertKind: "info" | "warning" | "danger" | null =
+      loanLimit != null && loanUsedPrincipal != null && loanLimit > 0
+        ? loanUtilPct >= 95
+          ? "danger"
+          : loanUtilPct >= 85
+          ? "warning"
+          : loanUtilPct >= 70
+          ? "info"
+          : null
+        : null;
+
+    const utilAlertTitle =
+      loanLimit != null && loanUsedPrincipal != null ? `Used ${fmtMoney(loanUsedPrincipal)} of ${fmtMoney(loanLimit)}` : undefined;
+
+    const ratesForBank = selectedBankId ? ratesByBank[selectedBankId] ?? null : null;
+    const ratesForTenor =
+      ratesForBank && selectedLoan
+        ? ratesForBank
+            .filter((r) => Number(r.tenor_months) === Number(selectedLoan.kibor_tenor_months))
+            .slice()
+            .sort((a, b) => a.effective_date.localeCompare(b.effective_date))
+        : null;
+
+    const placeholderRate = selectedLoan ? Number(selectedLoan.kibor_placeholder_rate_percent ?? 0) : 0;
+
+    const kiborAlert: { kind: "warning" | "danger"; text: string; title?: string } | null = (() => {
+      if (!selectedLoanId || !selectedLoan) return null;
+      if (!ratesForTenor) return null;
+
+      if (!ratesForTenor.length) {
+        return {
+          kind: "danger",
+          text: "No KIBOR — using placeholder",
+          title: `No rates found for ${selectedLoan.kibor_tenor_months}M. Placeholder: ${fmtRate(placeholderRate)}%`,
+        };
+      }
+
+      const first = ratesForTenor[0];
+      if (first && first.effective_date > scopeStart) {
+        return {
+          kind: "warning",
+          text: "Placeholder rate in range",
+          title: `Using placeholder (${fmtRate(placeholderRate)}%) until ${first.effective_date}.`,
+        };
+      }
+
+      return null;
+    })();
+
+    const backfillAlert: { kind: "info" | "danger"; text: string; title?: string } | null = (() => {
+      if (!scopeBackfillStatus) return null;
+      if (scopeBackfillStatus.status === "running") {
+        const pct =
+          scopeBackfillStatus.total_days > 0
+            ? Math.min(100, Math.round((scopeBackfillStatus.processed_days / scopeBackfillStatus.total_days) * 100))
+            : 0;
+        return {
+          kind: "info",
+          text: `Backfill running · ${pct}%`,
+          title: `${scopeBackfillStatus.processed_days}/${scopeBackfillStatus.total_days} days processed`,
+        };
+      }
+      if (scopeBackfillStatus.status === "error") {
+        return { kind: "danger", text: "Backfill error", title: scopeBackfillStatus.message ?? undefined };
+      }
+      return null;
+    })();
+
+    const hasScopeAlerts = !!utilAlertKind || !!kiborAlert || !!backfillAlert || !!ratesLoadError;
 
   if (!tokenReady) {
     return (
@@ -697,6 +842,34 @@ export default function App() {
                       ) : null}
                     </div>
                   </div>
+                  
+                  {hasScopeAlerts ? (
+                    <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
+                      {utilAlertKind ? (
+                        <Pill kind={utilAlertKind} title={utilAlertTitle}>
+                          Utilization {loanUtilPct}%
+                        </Pill>
+                      ) : null}
+
+                      {kiborAlert ? (
+                        <Pill kind={kiborAlert.kind} title={kiborAlert.title}>
+                          {kiborAlert.text}
+                        </Pill>
+                      ) : null}
+
+                      {backfillAlert ? (
+                        <Pill kind={backfillAlert.kind} title={backfillAlert.title}>
+                          {backfillAlert.text}
+                        </Pill>
+                      ) : null}
+
+                      {ratesLoadError ? (
+                        <Pill kind="warning" title={ratesLoadError}>
+                          KIBOR status unavailable
+                        </Pill>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {/* Actions */}
                   <div className="flex items-center justify-start gap-2 lg:justify-end">
@@ -878,10 +1051,8 @@ export default function App() {
 
                               {loanLimit == null ? null : (
                                 <div className="pt-1">
-                                  {loanUsedBackfillRunning ? (
-                                    <div className="mb-2 text-xs text-slate-500">
-                                      Utilization will update after KIBOR backfill finishes.
-                                    </div>
+                                  {scopeBackfillStatus?.status === "running" ? (
+                                    <div className="mb-2 text-xs text-slate-500">Backfill running — numbers may change as rates load.</div>
                                   ) : null}
 
                                   <Progress value={loanUtilPct}/>

@@ -20,6 +20,15 @@ export type LoanOut = {
   created_at?: string;
 };
 
+export type RateOut = {
+  id: number;
+  bank_id: number;
+  tenor_months: number;
+  effective_date: string; // YYYY-MM-DD
+  annual_rate_percent: number;
+  created_at?: string;
+};
+
 export type LoanDateBoundsOut = { min_date: string | null; max_date: string | null };
 
 export type LoanBalanceOut = {
@@ -179,6 +188,10 @@ export async function deleteBank(bankId: number) {
 
 export async function listLoans(bankId: number) {
   return await request<LoanOut[]>(`/banks/${bankId}/loans`);
+}
+
+export async function listRates(bankId: number) {
+  return await request<RateOut[]>(`/banks/${bankId}/rates`);
 }
 
 export async function loanDateBounds(bankId: number, loanId: number) {
