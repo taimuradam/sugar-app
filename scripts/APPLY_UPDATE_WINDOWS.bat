@@ -4,6 +4,10 @@ setlocal EnableExtensions EnableDelayedExpansion
 set PROJECT=sugarapp
 cd /d "%~dp0\.."
 
+if not exist data mkdir data
+if not exist data\pgdata mkdir data\pgdata
+if not exist backups mkdir backups
+
 set ZIP=%~1
 if "%ZIP%"=="" set ZIP=%CD%\update.zip
 
@@ -18,8 +22,6 @@ if not exist "%ZIP%" (
   pause
   exit /b 1
 )
-
-if not exist backups mkdir backups
 
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH-mm"') do set TS=%%i
 echo Creating safety backup backups\backup_%TS%.sql ...
