@@ -65,5 +65,5 @@ if errorlevel 1 (
 echo Running database migrations...
 docker compose -p %PROJECT% -f docker-compose.local.yml exec -T backend alembic upgrade head
 
-start "" "http://localhost:8080"
+start "" "http://localhost:8081"
 echo Update complete.
