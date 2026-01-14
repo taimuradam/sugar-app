@@ -6,12 +6,12 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: finance
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d finance"]
       interval: 2s
       timeout: 5s
-      retries: 30
+      retries: 60
     restart: unless-stopped
 
   backend:
@@ -25,9 +25,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "8000:8000"
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read(); print('ok')\""
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
 
   web:
     build:
@@ -36,10 +44,8 @@ services:
       args:
         VITE_API_URL: /api
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "8080:80"
     restart: unless-stopped
-
-volumes:
-  pgdata:

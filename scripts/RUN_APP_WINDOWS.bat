@@ -4,6 +4,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 set PROJECT=sugarapp
 cd /d "%~dp0\.."
 
+if not exist data mkdir data
+if not exist data\pgdata mkdir data\pgdata
 if not exist backups mkdir backups
 
 where docker >NUL 2>NUL
@@ -31,14 +33,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Waiting for the app to become ready...
+echo Waiting for the app to become ready (via /api/health)...
 set READY=0
-for /L %%i in (1,1,60) do (
-  powershell -NoProfile -Command ^
-    "try { $r=Invoke-WebRequest -UseBasicParsing -Uri http://localhost:8080 -TimeoutSec 2; if($r.StatusCode -ge 200){ exit 0 } else { exit 1 } } catch { exit 1 }" >NUL 2>NUL
+for /l %%i in (1,1,120) do (
+  powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing http://localhost:8080/api/health -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
   if !ERRORLEVEL! EQU 0 (
     set READY=1
-    goto :ready
+    goto ready
   )
   timeout /t 1 >NUL
 )
