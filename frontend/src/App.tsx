@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   LogOut,
   Building2,
   Receipt,
   LineChart,
+  Loader2,
   Download,
   Users,
   Trash2,
@@ -197,6 +198,42 @@ export default function App() {
   const [ratesLoadError, setRatesLoadError] = useState<string>("");
 
   const [scopeBackfillStatus, setScopeBackfillStatus] = useState<api.BackfillStatus | null>(null);
+
+  // Show a temporary "Fetching KIBOR..." pill while a new principal debit transaction triggers a KIBOR scrape.
+  const [kiborTxScrapeRunning, setKiborTxScrapeRunning] = useState(false);
+  const kiborTxScrapeStartedAtRef = useRef<number>(0);
+  const kiborTxScrapeHideTimerRef = useRef<number | null>(null);
+
+  const setKiborTxScrapeBusy = (busy: boolean) => {
+    if (busy) {
+      if (kiborTxScrapeHideTimerRef.current != null) {
+        window.clearTimeout(kiborTxScrapeHideTimerRef.current);
+        kiborTxScrapeHideTimerRef.current = null;
+      }
+      kiborTxScrapeStartedAtRef.current = Date.now();
+      setKiborTxScrapeRunning(true);
+      return;
+    }
+
+    const elapsed = Date.now() - (kiborTxScrapeStartedAtRef.current || Date.now());
+    const minMs = 800; // avoids a distracting “flash” if it returns instantly
+    const delay = Math.max(0, minMs - elapsed);
+
+    if (kiborTxScrapeHideTimerRef.current != null) {
+      window.clearTimeout(kiborTxScrapeHideTimerRef.current);
+      kiborTxScrapeHideTimerRef.current = null;
+    }
+
+    if (delay === 0) {
+      setKiborTxScrapeRunning(false);
+      return;
+    }
+
+    kiborTxScrapeHideTimerRef.current = window.setTimeout(() => {
+      setKiborTxScrapeRunning(false);
+      kiborTxScrapeHideTimerRef.current = null;
+    }, delay);
+  };
 
   const defaultScopeEnd = karachiTodayISO();
   const defaultScopeStart = karachiMonthStartISO();
@@ -629,7 +666,7 @@ export default function App() {
       return null;
     })();
 
-    const hasScopeAlerts = !!utilAlertKind || !!kiborAlert || !!backfillAlert || !!ratesLoadError;
+    const hasScopeAlerts = !!utilAlertKind || !!kiborAlert || !!backfillAlert || !!ratesLoadError || kiborTxScrapeRunning;
 
   if (!tokenReady) {
     return (
@@ -844,10 +881,24 @@ export default function App() {
                   </div>
                   
                   {hasScopeAlerts ? (
-                    <div className="mt-2 flex w-full flex-wrap items-center justify-center gap-2">
+                    <div className="mt-2 flex w-full flex-wrap items-start justify-center gap-2">
                       {utilAlertKind ? (
-                        <Pill kind={utilAlertKind} title={utilAlertTitle}>
-                          Utilization {loanUtilPct}%
+                        <div className="flex flex-col items-center gap-2">
+                          <Pill kind={utilAlertKind} title={utilAlertTitle}>
+                            Utilization {loanUtilPct}%
+                          </Pill>
+
+                          {kiborTxScrapeRunning ? (
+                            <Pill kind="info" title="Fetching KIBOR rate for the new transaction…">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Fetching rates…
+                            </Pill>
+                          ) : null}
+                        </div>
+                      ) : kiborTxScrapeRunning ? (
+                        <Pill kind="info" title="Fetching KIBOR rate for the new transaction…">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Fetching KIBOR…
                         </Pill>
                       ) : null}
 
@@ -1126,6 +1177,7 @@ export default function App() {
                   refreshTick={refreshTick}
                   role={role}
                   onError={setError}
+                  onKiborScrapeBusy={setKiborTxScrapeBusy}
                   onTransactionsChanged={async () => {
                     await refreshBanks(false);
                     await refreshLoans(selectedBankId, false);
@@ -1586,6 +1638,7 @@ function Transactions(props: {
   role: string;
   onError: (e: string) => void;
   onTransactionsChanged?: () => void;
+  onKiborScrapeBusy?: (busy: boolean) => void;
 }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -1634,6 +1687,7 @@ function Transactions(props: {
   const [note, setNote] = useState<string>("");
 
   const isAdmin = props.role === "admin";
+  const [addingTx, setAddingTx] = useState(false);
 
   async function refresh() {
     props.onError("");
@@ -1715,13 +1769,31 @@ function Transactions(props: {
         </div>
         <div className="mt-3">
           <Button
+            disabled={addingTx}
             onClick={async () => {
               props.onError("");
+              if (addingTx) return;
+
+              let willScrapeKibor = false;
+
               try {
+                setAddingTx(true);
+
                 const parsed = Number(amount);
                 if (!Number.isFinite(parsed) || Math.abs(parsed) < 1e-12) throw new Error("amount_invalid");
                 const signed = direction === "credit" ? -Math.abs(parsed) : Math.abs(parsed);
-                await api.addTx(props.bankId, props.loanId, { date, category, amount: signed, note: note.trim() ? note.trim() : null });
+
+                // Backend scrapes KIBOR on principal debits (amount > 0)
+                willScrapeKibor = category === "principal" && signed > 0;
+                if (willScrapeKibor) props.onKiborScrapeBusy?.(true);
+
+                await api.addTx(props.bankId, props.loanId, {
+                  date,
+                  category,
+                  amount: signed,
+                  note: note.trim() ? note.trim() : null,
+                });
+
                 toast.success("Transaction added.");
                 setAmount("");
                 setNote("");
@@ -1729,10 +1801,20 @@ function Transactions(props: {
                 props.onTransactionsChanged?.();
               } catch (e: any) {
                 props.onError(e?.message || "failed_to_add_tx");
+              } finally {
+                if (willScrapeKibor) props.onKiborScrapeBusy?.(false);
+                setAddingTx(false);
               }
             }}
           >
-            Add
+            {addingTx ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Adding…
+              </>
+            ) : (
+              "Add"
+            )}
           </Button>
         </div>
       </div>      ) : (
